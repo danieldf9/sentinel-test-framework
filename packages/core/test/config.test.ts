@@ -48,6 +48,31 @@ describe('loadConfig', () => {
     expect(overridden.config.healing.mode).toBe('off');
   });
 
+  it('.env parser: inline comments never leak into values', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-test-'));
+    writeFileSync(
+      path.join(dir, '.env'),
+      [
+        'SENTINEL_LLM_MODEL="gemma-4-31b-it" # inline comment after quoted value',
+        'SENTINEL_LLM_PROVIDER=openai-compatible # unquoted with comment',
+        'SENTINEL_LLM_BASE_URL=http://localhost:11434/v1#fragment', // # without space is data
+        `SENTINEL_LLM_API_KEY='k # not a comment inside quotes'`,
+      ].join('\n'),
+    );
+    try {
+      const loaded = await loadConfig(dir);
+      expect(loaded.config.llm.model).toBe('gemma-4-31b-it');
+      expect(loaded.config.llm.provider).toBe('openai-compatible');
+      expect(loaded.config.llm.baseUrl).toBe('http://localhost:11434/v1#fragment');
+      expect(process.env.SENTINEL_LLM_API_KEY).toBe('k # not a comment inside quotes');
+    } finally {
+      delete process.env.SENTINEL_LLM_PROVIDER;
+      delete process.env.SENTINEL_LLM_MODEL;
+      delete process.env.SENTINEL_LLM_BASE_URL;
+      delete process.env.SENTINEL_LLM_API_KEY;
+    }
+  });
+
   it('loads .env (nearest, fill-only) — real env vars always win', async () => {
     dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-test-'));
     writeFileSync(

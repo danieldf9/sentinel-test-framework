@@ -64,6 +64,7 @@ export {
   descriptorsFromFingerprint,
   buildLocator,
   describeDescriptor,
+  descriptorEquals,
   descriptorToCode,
 } from './descriptors.js';
 export { sentinelDomAgent, type DomAgentOptions } from './domAgent.js';

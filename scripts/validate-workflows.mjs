@@ -5,7 +5,7 @@
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -97,33 +97,45 @@ console.log('ci.yml (this repo):');
   check(!!doc.jobs?.e2e?.permissions, 'caller grants comment/check permissions');
 }
 
-console.log('sentinel init template:');
+console.log('sentinel init template (all package managers):');
 {
-  const text = readFileSync(path.join(root, 'packages/cli/src/index.ts'), 'utf8');
-  const tpl = (text.match(/const WORKFLOW_TEMPLATE = `([\s\S]*?)`;/)?.[1] ?? '')
-    .replaceAll('\\${', '${')
-    .replaceAll('\\`', '`')
-    .replaceAll('\\\\n', '\\n');
-  check(tpl.length > 0, 'template found in the CLI source');
-  let parses = true;
-  try {
-    parse(tpl);
-  } catch {
-    parses = false;
+  // Validate the REAL builder output for every supported package manager —
+  // an `npm ci` scaffolded into a pnpm/yarn workspace would fail in CI.
+  const { buildWorkflowTemplate } = await import(
+    pathToFileURL(path.join(root, 'packages/cli/dist/templates.js')).href
+  );
+  const installMarker = {
+    npm: 'npm ci',
+    pnpm: 'pnpm install --frozen-lockfile',
+    yarn: 'yarn install --frozen-lockfile',
+  };
+  for (const pm of ['npm', 'pnpm', 'yarn']) {
+    const tpl = buildWorkflowTemplate(pm);
+    let parses = true;
+    try {
+      parse(tpl);
+    } catch {
+      parses = false;
+    }
+    check(parses, `${pm} template is valid YAML`);
+    check(tpl.includes(installMarker[pm]), `${pm} template installs with ${pm}`);
+    check(
+      pm !== 'pnpm' || tpl.includes('pnpm/action-setup@'),
+      `${pm} template sets up its package manager`,
+    );
+    check(
+      tpl.includes('actions/cache/restore@') && tpl.includes('actions/cache/save@'),
+      `${pm} template persists the cache`,
+    );
+    check(
+      tpl.includes('npx sentinel run') && tpl.includes('npx sentinel report'),
+      `${pm} template runs + reports`,
+    );
+    check(
+      tpl.includes('<!-- sentinel-summary -->'),
+      `${pm} template upserts a single summary comment`,
+    );
   }
-  check(parses, 'template is valid YAML');
-  check(
-    tpl.includes('actions/cache/restore@') && tpl.includes('actions/cache/save@'),
-    'user template persists the cache',
-  );
-  check(
-    tpl.includes('npx sentinel run') && tpl.includes('npx sentinel report'),
-    'user template runs + reports',
-  );
-  check(
-    tpl.includes('<!-- sentinel-summary -->'),
-    'user template upserts a single summary comment',
-  );
 }
 
 console.log('='.repeat(50));

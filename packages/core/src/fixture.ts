@@ -4,7 +4,12 @@ import { test as base, expect, type Locator, type Page, type TestInfo } from '@p
 import { createProvider, type ResilientProvider } from '@sentinel/providers';
 import { ArtifactRecorder, testArtifactDirName, type CaptureFrame } from './capture.js';
 import { loadConfig, type LoadedConfig } from './config.js';
-import { buildLocator, describeDescriptor, descriptorsFromFingerprint } from './descriptors.js';
+import {
+  buildLocator,
+  describeDescriptor,
+  descriptorEquals,
+  descriptorsFromFingerprint,
+} from './descriptors.js';
 import { classifyFailure } from './diagnosis.js';
 import { refineDiagnosis } from './diagnosisLlm.js';
 import { sentinelDomAgent, type DomAgentOptions } from './domAgent.js';
@@ -169,8 +174,25 @@ export class SentinelActions {
           `[sentinel] required pre-step "${pre.name}" (${pre.selector}) not found on ${this.pageUrl()}`,
         );
       }
-      await locator.click({ timeout: this.cfg.actionTimeoutMs });
-      this.recordStepRow(stepId, 'preStep', pre.name, 'passed', null, null, null, started);
+      // The click itself can fail even when the element is visible (obscured,
+      // intercepted, detached mid-click). An optional pre-step must never take
+      // the whole test down for that — log, record, continue.
+      try {
+        await locator.click({ timeout: this.cfg.actionTimeoutMs });
+        this.recordStepRow(stepId, 'preStep', pre.name, 'passed', null, null, null, started);
+      } catch (err) {
+        this.recordStepRow(stepId, 'preStep', pre.name, 'failed', null, null, null, started);
+        const detail = String((err as Error).message ?? err).split('\n')[0];
+        if (pre.optional) {
+          console.warn(
+            `[sentinel] optional pre-step "${pre.name}" could not be clicked: ${detail}`,
+          );
+          continue;
+        }
+        throw new Error(`[sentinel] required pre-step "${pre.name}" failed to click: ${detail}`, {
+          cause: err,
+        });
+      }
     }
   }
 
@@ -251,7 +273,7 @@ export class SentinelActions {
     const existing = this.ctx.store.getCacheEntry(this.testId, stepId);
     const all: CandidateDescriptor[] = [];
     const push = (d: CandidateDescriptor) => {
-      if (!all.some((x) => JSON.stringify(x) === JSON.stringify(d))) all.push(d);
+      if (!all.some((x) => descriptorEquals(x, d))) all.push(d);
     };
     if (forcedPrimary) push(forcedPrimary);
     for (const d of fresh) push(d);

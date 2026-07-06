@@ -173,11 +173,18 @@ export function loadDotEnv(startDir: string): string | null {
         if (eq <= 0) continue;
         const key = line.slice(0, eq).trim();
         let value = line.slice(eq + 1).trim();
-        if (
-          (value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))
-        ) {
-          value = value.slice(1, -1);
+        if (value.startsWith('"') || value.startsWith("'")) {
+          // Quoted value: take everything up to the MATCHING quote; whatever
+          // follows (e.g. an inline comment) is ignored. `KEY="sk-1" # note`
+          // must yield `sk-1`, never `"sk-1" # note`.
+          const closing = value.indexOf(value[0]!, 1);
+          value = closing !== -1 ? value.slice(1, closing) : value.slice(1);
+        } else {
+          // Unquoted value: strip inline comments (whitespace before '#', so
+          // URLs like http://x/a#b stay intact).
+          const comment = value.search(/\s#/);
+          if (comment !== -1) value = value.slice(0, comment).trim();
+          if (value.startsWith('#')) value = '';
         }
         if (process.env[key] === undefined) process.env[key] = value;
       }

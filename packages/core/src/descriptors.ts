@@ -34,6 +34,17 @@ function cssEscapeClass(s: string): string {
   return s.replace(/([^a-zA-Z0-9_-])/g, '\\$1');
 }
 
+/** Field-wise equality — JSON.stringify comparison would depend on key order,
+ * which is not guaranteed for descriptors deserialized from different sources. */
+export function descriptorEquals(a: CandidateDescriptor, b: CandidateDescriptor): boolean {
+  return (
+    a.kind === b.kind &&
+    a.value === b.value &&
+    (a.name ?? null) === (b.name ?? null) &&
+    (a.exact ?? null) === (b.exact ?? null)
+  );
+}
+
 export function buildLocator(page: Page, d: CandidateDescriptor): Locator {
   switch (d.kind) {
     case 'testid':

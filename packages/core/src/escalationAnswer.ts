@@ -1,4 +1,4 @@
-import { describeDescriptor, descriptorsFromFingerprint } from './descriptors.js';
+import { describeDescriptor, descriptorEquals, descriptorsFromFingerprint } from './descriptors.js';
 import type { SentinelStore } from './storage/store.js';
 import type { CandidateDescriptor } from './types.js';
 
@@ -60,7 +60,7 @@ export function applyEscalationAnswer(
   const existing = store.getCacheEntry(esc.testId, esc.stepId);
   const all: CandidateDescriptor[] = [];
   const push = (d: CandidateDescriptor) => {
-    if (!all.some((x) => JSON.stringify(x) === JSON.stringify(d))) all.push(d);
+    if (!all.some((x) => descriptorEquals(x, d))) all.push(d);
   };
   push(candidate.descriptor);
   for (const d of descriptorsFromFingerprint(candidate.fingerprint)) push(d);
