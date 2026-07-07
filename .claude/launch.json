@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "studio",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "packages/cli/bin/sentinel.js",
+        "studio",
+        "--cwd",
+        "examples/tests",
+        "--port",
+        "4300",
+        "--no-open"
+      ],
+      "port": 4300
+    }
+  ]
+}
