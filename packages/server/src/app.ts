@@ -3,6 +3,7 @@ import fastifyStatic from '@fastify/static';
 import {
   applyEscalationAnswer,
   type EscalationQuestion,
+  type LoadedConfig,
   type SentinelStore,
 } from '@sentinel/core';
 import {
@@ -10,9 +11,11 @@ import {
   queryFlakeStats,
   queryLlmCosts,
   queryRunDetail,
+  queryRunSteps,
   queryRunsOverview,
 } from '@sentinel/report';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { RunController } from './runController.js';
 
 export interface AppDeps {
   store: SentinelStore;
@@ -22,6 +25,8 @@ export interface AppDeps {
   webDir: string | null;
   /** Identity recorded when this server answers escalations (channel 'web'). */
   actor?: string;
+  /** Full loaded config — enables run triggering (POST /api/runs). Omit for read-only. */
+  loaded?: LoadedConfig;
 }
 
 /** Recent runs to scan when resolving a single run's overview (local, single-user). */
@@ -34,6 +39,8 @@ const RUN_LOOKUP_LIMIT = 200;
  */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+  // Run-triggering is available only when the full config is provided.
+  const runner = deps.loaded ? new RunController(deps.store, deps.loaded) : null;
 
   // Heal screenshots are written under artifactsDir; serve that tree read-only.
   await app.register(fastifyStatic, {
@@ -84,7 +91,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       screenshotAfter: shotUrl(h.screenshotAfter),
     }));
     const escalations = detail.escalations.map((e) => ({ ...e, question: mapQuestion(e.question) }));
-    return { overview, detail: { ...detail, heals, escalations } };
+    const steps = queryRunSteps(deps.store, req.params.id);
+    const running = runner?.status()?.runId === req.params.id && runner.isActive();
+    return { overview, running, detail: { ...detail, heals, escalations, steps } };
   });
 
   app.get('/api/flake', async () => queryFlakeStats(deps.store));
@@ -111,6 +120,25 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         const code = /not found/.test(msg) ? 404 : /is already/.test(msg) ? 409 : 400;
         reply.code(code);
         return { error: msg };
+      }
+    },
+  );
+
+  // ---- Run triggering (live execution) --------------------------------------
+  app.get('/api/runs/active', async () => runner?.status() ?? { running: false });
+
+  app.post<{ Body: { grep?: string; project?: string; heal?: string } }>(
+    '/api/runs',
+    async (req, reply) => {
+      if (!runner) {
+        reply.code(503);
+        return { error: 'run triggering unavailable (server started without full config)' };
+      }
+      try {
+        return runner.start(req.body ?? {});
+      } catch (err) {
+        reply.code(409);
+        return { error: (err as Error).message };
       }
     },
   );

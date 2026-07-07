@@ -1,15 +1,35 @@
 import type { JSX } from 'react';
-import { useRuns, useSummary } from '../api';
+import { useActiveRun, useRuns, useStartRun, useSummary } from '../api';
 import { formatTs, healSummary, StatusBadge } from '../ui';
 
 export function RunsList({ onOpenRun }: { onOpenRun: (id: string) => void }): JSX.Element {
   const summary = useSummary();
   const runs = useRuns();
+  const active = useActiveRun();
+  const startRun = useStartRun();
+  const running = active.data?.running ?? false;
 
   return (
     <div>
-      <h1 className="page-title">Runs</h1>
+      <div className="row-between">
+        <h1 className="page-title">Runs</h1>
+        <button
+          className="btn-primary"
+          disabled={running || startRun.isPending}
+          onClick={() =>
+            startRun.mutate(
+              {},
+              { onSuccess: (r) => onOpenRun(r.runId) },
+            )
+          }
+        >
+          {running ? 'Run in progress…' : '▶ Run suite'}
+        </button>
+      </div>
       <p className="page-sub">Test runs recorded by Sentinel, most recent first.</p>
+      {startRun.isError && (
+        <div className="esc-error">Could not start run: {(startRun.error as Error).message}</div>
+      )}
 
       {summary.data && summary.data.status !== 'no-runs' && (
         <div className="tiles">

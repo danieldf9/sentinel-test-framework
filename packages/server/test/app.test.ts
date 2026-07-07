@@ -158,6 +158,21 @@ describe('Studio read API', () => {
     store.close();
   });
 
+  it('gates run triggering when the server has no full config (read-only mode)', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-server-'));
+    const store = new SentinelStore(':memory:');
+    const app = await buildApp({ store, artifactsDir: dir, webDir: null });
+
+    expect((await app.inject({ method: 'GET', url: '/api/runs/active' })).json()).toEqual({
+      running: false,
+    });
+    const post = await app.inject({ method: 'POST', url: '/api/runs', payload: {} });
+    expect(post.statusCode).toBe(503);
+
+    await app.close();
+    store.close();
+  });
+
   it('reports no-runs on an empty store', async () => {
     dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-server-'));
     const store = new SentinelStore(':memory:');

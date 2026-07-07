@@ -78,6 +78,22 @@ export interface EscalationRow {
   question: EscalationQuestion | null;
 }
 
+export interface StepRow {
+  id: number;
+  testId: string;
+  stepId: string;
+  action: string;
+  intent: string;
+  groupPath: string;
+  status: string;
+  tier: number | null;
+  confidence: number | null;
+  classification: string | null;
+  durationMs: number;
+  url: string;
+  ts: number;
+}
+
 export interface RunDetail {
   tests: TestResultRow[];
   heals: HealRow[];
@@ -200,6 +216,27 @@ export function queryRunDetail(store: SentinelStore, runId: string): RunDetail {
     }),
   );
   return { tests, heals, escalations };
+}
+
+/** Ordered step timeline for a run — powers the Studio live-run view. */
+export function queryRunSteps(store: SentinelStore, runId: string): StepRow[] {
+  return all(store, 'SELECT * FROM steps WHERE run_id = ? ORDER BY ts, id', runId).map(
+    (s): StepRow => ({
+      id: s.id as number,
+      testId: s.test_id as string,
+      stepId: s.step_id as string,
+      action: s.action as string,
+      intent: (s.intent as string) ?? '',
+      groupPath: (s.group_path as string) ?? '',
+      status: s.status as string,
+      tier: (s.tier as number | null) ?? null,
+      confidence: (s.confidence as number | null) ?? null,
+      classification: (s.classification as string | null) ?? null,
+      durationMs: (s.duration_ms as number) ?? 0,
+      url: (s.url as string) ?? '',
+      ts: s.ts as number,
+    }),
+  );
 }
 
 /** Per-test flake aggregation across all recorded runs. */

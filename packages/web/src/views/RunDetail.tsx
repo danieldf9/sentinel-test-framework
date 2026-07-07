@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
-import { useRun } from '../api';
+import { useActiveRun, useRun } from '../api';
 import type { HealRow } from '../types';
-import { formatDuration, ModeBadge, StatusBadge } from '../ui';
+import { formatDuration, ModeBadge, StatusBadge, StepBadge } from '../ui';
 
 export function RunDetail({
   runId,
@@ -11,11 +11,13 @@ export function RunDetail({
   onBack: () => void;
 }): JSX.Element {
   const { data, isLoading, isError } = useRun(runId);
+  const active = useActiveRun();
 
   if (isLoading) return <div className="state">Loading run…</div>;
   if (isError || !data) return <div className="state">Run not found.</div>;
 
-  const { overview, detail } = data;
+  const { overview, detail, running } = data;
+  const liveOutput = running && active.data?.runId === runId ? (active.data.output ?? []) : [];
 
   return (
     <div>
@@ -26,13 +28,56 @@ export function RunDetail({
         <h1 className="page-title">
           <code>{overview.id}</code>
         </h1>
-        <StatusBadge status={overview.status} />
+        {running ? <span className="badge b-blue running-dot">running…</span> : (
+          <StatusBadge status={overview.status} />
+        )}
       </div>
       <p className="page-sub">
         {overview.passed}/{overview.tests} passed · {detail.heals.length} heal(s) ·{' '}
         {detail.escalations.length} escalation(s)
         {overview.gitSha ? ` · ${overview.gitSha.slice(0, 8)}` : ''}
       </p>
+
+      {liveOutput.length > 0 && (
+        <div className="card">
+          <h2>Live output</h2>
+          <pre className="log">{liveOutput.join('\n')}</pre>
+        </div>
+      )}
+
+      {detail.steps.length > 0 && (
+        <div className="card">
+          <h2>Steps</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Intent</th>
+                <th>Status</th>
+                <th>Tier / conf</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.steps.map((s) => (
+                <tr key={s.id}>
+                  <td>
+                    <code>{s.action}</code>
+                  </td>
+                  <td>{s.intent}</td>
+                  <td>
+                    <StepBadge status={s.status} />
+                  </td>
+                  <td>
+                    {s.tier != null
+                      ? `tier ${s.tier}${s.confidence != null ? ` · ${s.confidence.toFixed(2)}` : ''}`
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="card">
         <h2>Tests</h2>

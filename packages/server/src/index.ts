@@ -63,7 +63,7 @@ export async function startStudioServer(opts: StudioServerOptions = {}): Promise
   }
 
   const actor = process.env.USER ?? process.env.USERNAME ?? safeUsername() ?? 'studio';
-  const app = await buildApp({ store, artifactsDir: loaded.artifactsDir, webDir, actor });
+  const app = await buildApp({ store, artifactsDir: loaded.artifactsDir, webDir, actor, loaded });
   const port = opts.port ?? DEFAULT_PORT;
   await app.listen({ port, host: HOST });
   const url = `http://${HOST}:${port}`;

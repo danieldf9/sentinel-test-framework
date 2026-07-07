@@ -126,10 +126,41 @@ export interface AnswerResult {
   appliedDescriptor: string | null;
 }
 
+export interface StepRow {
+  id: number;
+  testId: string;
+  stepId: string;
+  action: string;
+  intent: string;
+  groupPath: string;
+  status: string;
+  tier: number | null;
+  confidence: number | null;
+  classification: string | null;
+  durationMs: number;
+  url: string;
+  ts: number;
+}
+
 export interface RunDetail {
   tests: TestResultRow[];
   heals: HealRow[];
   escalations: EscalationRow[];
+  steps: StepRow[];
+}
+
+export interface RunDetailResponse {
+  overview: RunOverview;
+  running: boolean;
+  detail: RunDetail;
+}
+
+export interface ActiveRun {
+  runId?: string;
+  running: boolean;
+  startedAt?: number;
+  output?: string[];
+  status?: string;
 }
 
 export interface FlakeStat {

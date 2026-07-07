@@ -26,6 +26,19 @@ export function ModeBadge({ mode }: { mode: string }): JSX.Element {
   return <span className={`badge ${cls}`}>{mode}</span>;
 }
 
+/** Per-step status → badge color for the live run timeline. */
+export function StepBadge({ status }: { status: string }): JSX.Element {
+  const cls =
+    status === 'passed' || status === 'healed_auto'
+      ? 'b-green'
+      : status === 'healed_unverified'
+        ? 'b-amber'
+        : status === 'failed' || status === 'escalated'
+          ? 'b-red'
+          : 'b-gray';
+  return <span className={`badge ${cls}`}>{status}</span>;
+}
+
 export function formatTs(ms: number | null): string {
   return typeof ms === 'number' && ms > 0
     ? new Date(ms).toISOString().replace('T', ' ').slice(0, 19)

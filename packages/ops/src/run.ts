@@ -23,6 +23,9 @@ export interface StartRunOptions {
   /** Child stdio. CLI uses 'inherit' (stream to terminal); the server uses
    * 'pipe' to capture output for the live view. Defaults to 'inherit'. */
   stdio?: StdioOptions;
+  /** Working directory to spawn `playwright test` in (where the Playwright
+   * config lives). Defaults to the current process cwd (CLI behavior). */
+  cwd?: string;
   /** Explicit run id. Falls back to SENTINEL_RUN_ID, then a timestamp id. */
   runId?: string;
 }
@@ -69,6 +72,7 @@ export function startRun(
     {
       stdio: opts.stdio ?? 'inherit',
       shell: true,
+      cwd: opts.cwd,
       env: {
         ...process.env,
         SENTINEL_RUN_ID: runId,

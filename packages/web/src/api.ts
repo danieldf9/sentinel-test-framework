@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  ActiveRun,
   AnswerResult,
   FlakeStat,
   LlmCosts,
   PendingEscalation,
-  RunDetail,
+  RunDetailResponse,
   RunOverview,
   SummaryData,
 } from './types';
@@ -38,8 +39,9 @@ export function useRun(id: string | null) {
   return useQuery({
     queryKey: ['run', id],
     enabled: id != null,
-    queryFn: () => getJson<{ overview: RunOverview; detail: RunDetail }>(`/api/runs/${id}`),
-    refetchInterval: POLL_MS,
+    queryFn: () => getJson<RunDetailResponse>(`/api/runs/${id}`),
+    // Poll fast while the run is still in flight, then relax.
+    refetchInterval: (query) => (query.state.data?.running ? 1500 : POLL_MS),
   });
 }
 
@@ -64,6 +66,35 @@ export function useEscalations() {
     queryKey: ['escalations'],
     queryFn: () => getJson<PendingEscalation[]>('/api/escalations'),
     refetchInterval: POLL_MS,
+  });
+}
+
+export function useActiveRun() {
+  return useQuery({
+    queryKey: ['active-run'],
+    queryFn: () => getJson<ActiveRun>('/api/runs/active'),
+    refetchInterval: 1500,
+  });
+}
+
+/** Trigger a suite run. Refreshes the active-run + runs views on success. */
+export function useStartRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (opts: { grep?: string; project?: string; heal?: string }) => {
+      const res = await fetch('/api/runs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(opts),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error((body as { error?: string })?.error ?? `HTTP ${res.status}`);
+      return body as { runId: string };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['active-run'] });
+      qc.invalidateQueries({ queryKey: ['runs'] });
+    },
   });
 }
 
