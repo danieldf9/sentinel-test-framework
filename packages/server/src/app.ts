@@ -14,6 +14,7 @@ import {
   queryRunSteps,
   queryRunsOverview,
 } from '@sentinel/report';
+import { previewPromotions, promoteAndOpenPr } from '@sentinel/ops';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { RunController } from './runController.js';
 
@@ -140,6 +141,51 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         reply.code(409);
         return { error: (err as Error).message };
       }
+    },
+  );
+
+  // ---- Promotion → PR -------------------------------------------------------
+  const rootDir = deps.loaded?.rootDir;
+  const runBusy = (): string | null =>
+    runner?.isActive() ? 'a run is in progress — promote after it finishes' : null;
+
+  app.get<{ Querystring: { includeUnverified?: string } }>(
+    '/api/promote/preview',
+    async (req, reply) => {
+      if (!rootDir) {
+        reply.code(503);
+        return { error: 'promotion unavailable (server started without full config)' };
+      }
+      const busy = runBusy();
+      if (busy) {
+        reply.code(409);
+        return { error: busy };
+      }
+      return previewPromotions(deps.store, rootDir, {
+        includeUnverified: req.query.includeUnverified === 'true',
+      });
+    },
+  );
+
+  app.post<{ Body: { includeUnverified?: boolean; branch?: string; push?: boolean } }>(
+    '/api/promote/apply',
+    async (req, reply) => {
+      if (!rootDir) {
+        reply.code(503);
+        return { error: 'promotion unavailable (server started without full config)' };
+      }
+      const busy = runBusy();
+      if (busy) {
+        reply.code(409);
+        return { error: busy };
+      }
+      const token = process.env.GITHUB_TOKEN || process.env.SENTINEL_GITHUB_TOKEN || undefined;
+      return promoteAndOpenPr(deps.store, rootDir, {
+        includeUnverified: req.body?.includeUnverified,
+        branch: req.body?.branch,
+        push: req.body?.push,
+        githubToken: token,
+      });
     },
   );
 

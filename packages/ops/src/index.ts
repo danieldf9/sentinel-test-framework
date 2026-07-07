@@ -21,4 +21,11 @@ export {
   type StartRunOptions,
   type StartedRun,
 } from './run.js';
-export { previewPromotions, type PromotePreview } from './gitPr.js';
+export {
+  previewPromotions,
+  promoteAndOpenPr,
+  parseGitHubRemote,
+  type PromotePreview,
+  type PromoteAndPrOptions,
+  type PromoteAndPrResult,
+} from './gitPr.js';

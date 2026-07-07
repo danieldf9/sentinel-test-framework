@@ -188,3 +188,33 @@ export interface LlmCosts {
   rows: LlmCostRow[];
   totalCostUsd: number;
 }
+
+export type PromotionStatus = 'ready' | 'conflict' | 'not-found' | 'missing-file';
+
+export interface PromotionPlan {
+  file: string;
+  oldCode: string;
+  newCode: string;
+  occurrences: number;
+  status: PromotionStatus;
+  note: string;
+  testIds: string[];
+}
+
+export interface PromotePreview {
+  plans: PromotionPlan[];
+  diff: string[];
+}
+
+export interface PromoteResult {
+  applied: number;
+  filesChanged: string[];
+  diff: string[];
+  branch: string | null;
+  base: string | null;
+  committed: boolean;
+  pushed: boolean;
+  prUrl: string | null;
+  note: string;
+  plans: PromotionPlan[];
+}

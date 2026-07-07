@@ -3,6 +3,7 @@ import { useEscalations, useSummary } from './api';
 import { Escalations } from './views/Escalations';
 import { Flake } from './views/Flake';
 import { LlmCosts } from './views/LlmCosts';
+import { Promote } from './views/Promote';
 import { RunDetail } from './views/RunDetail';
 import { RunsList } from './views/RunsList';
 
@@ -10,6 +11,7 @@ type View =
   | { name: 'runs' }
   | { name: 'run'; id: string }
   | { name: 'escalations' }
+  | { name: 'promote' }
   | { name: 'flake' }
   | { name: 'llm' };
 
@@ -42,6 +44,12 @@ export function App(): JSX.Element {
             {pending > 0 && <span className="count">{pending}</span>}
           </button>
           <button
+            className={section === 'promote' ? 'active' : ''}
+            onClick={() => setView({ name: 'promote' })}
+          >
+            Promote
+          </button>
+          <button
             className={section === 'flake' ? 'active' : ''}
             onClick={() => setView({ name: 'flake' })}
           >
@@ -67,6 +75,7 @@ export function App(): JSX.Element {
           <RunDetail runId={view.id} onBack={() => setView({ name: 'runs' })} />
         )}
         {view.name === 'escalations' && <Escalations />}
+        {view.name === 'promote' && <Promote />}
         {view.name === 'flake' && <Flake />}
         {view.name === 'llm' && <LlmCosts />}
       </main>

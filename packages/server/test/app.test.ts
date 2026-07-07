@@ -1,9 +1,59 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { LoadedConfig, SentinelStore as SentinelStoreType } from '@sentinel/core';
 import { SentinelStore } from '@sentinel/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
+
+/** previewPromotions/promoteAndOpenPr only read loaded.rootDir; a partial is enough. */
+const loadedFor = (rootDir: string): LoadedConfig => ({ rootDir }) as unknown as LoadedConfig;
+
+function seedPromotableHeal(store: SentinelStoreType, rootDir: string): void {
+  mkdirSync(path.join(rootDir, 'specs'), { recursive: true });
+  writeFileSync(
+    path.join(rootDir, 'specs', 'shop.spec.ts'),
+    `await s.click({ locator: page.locator('.btn-order'), intent: 'Place order button' });\n`,
+  );
+  store.ensureRun('r1', 'sha', 'auto');
+  store.recordHeal({
+    runId: 'r1',
+    testId: 'specs/shop.spec.ts::checkout',
+    stepId: 's1',
+    intent: 'Place order button',
+    oldLocator: `locator('.btn-order')`,
+    newLocator: 'stale',
+    tier: 1,
+    confidence: 0.9,
+    mode: 'AUTO',
+    reasoning: 'r',
+    screenshotBefore: null,
+    screenshotAfter: null,
+    gitSha: 'sha',
+  });
+  store.upsertCacheEntry({
+    testId: 'specs/shop.spec.ts::checkout',
+    stepId: 's1',
+    primary: { kind: 'role', value: 'button', name: 'Submit order', exact: true },
+    alternates: [],
+    fingerprint: {
+      tag: 'button',
+      role: 'button',
+      name: 'Submit order',
+      text: 'Submit order',
+      id: null,
+      testId: null,
+      classes: [],
+      attributes: {},
+      nearbyText: '',
+      labelText: '',
+      cssPath: 'body > button:nth-of-type(1)',
+    },
+    intent: 'Place order button',
+    lastVerifiedAt: Date.now(),
+  });
+}
 
 let dir: string;
 afterEach(() => {
@@ -169,6 +219,62 @@ describe('Studio read API', () => {
     const post = await app.inject({ method: 'POST', url: '/api/runs', payload: {} });
     expect(post.statusCode).toBe(503);
 
+    await app.close();
+    store.close();
+  });
+
+  it('previews promotions and applies them to a git branch (no token → local commit)', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-server-'));
+    spawnSync('git', ['init', '-b', 'main'], { cwd: dir });
+    spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+
+    const store = new SentinelStore(':memory:');
+    seedPromotableHeal(store, dir);
+    spawnSync('git', ['add', '-A'], { cwd: dir });
+    spawnSync('git', ['commit', '-m', 'init'], { cwd: dir });
+
+    const app = await buildApp({
+      store,
+      artifactsDir: dir,
+      webDir: null,
+      loaded: loadedFor(dir),
+    });
+
+    // Preview is read-only: shows the ready plan + diff, touches nothing.
+    const preview = await app.inject({ method: 'GET', url: '/api/promote/preview' });
+    expect(preview.statusCode).toBe(200);
+    const pv = preview.json();
+    expect(pv.plans).toHaveLength(1);
+    expect(pv.plans[0].status).toBe('ready');
+    expect(pv.diff.join('\n')).toContain('Submit order');
+    expect(readFileSync(path.join(dir, 'specs', 'shop.spec.ts'), 'utf8')).toContain('.btn-order');
+
+    // Apply commits to a branch; no token → no PR.
+    const apply = await app.inject({
+      method: 'POST',
+      url: '/api/promote/apply',
+      payload: { push: false, branch: 'sentinel/test-apply' },
+    });
+    expect(apply.statusCode).toBe(200);
+    const res = apply.json();
+    expect(res.applied).toBe(1);
+    expect(res.committed).toBe(true);
+    expect(res.prUrl).toBeNull();
+    expect(res.branch).toBe('sentinel/test-apply');
+    expect(readFileSync(path.join(dir, 'specs', 'shop.spec.ts'), 'utf8')).toContain(
+      "getByRole('button', { name: 'Submit order', exact: true })",
+    );
+
+    await app.close();
+    store.close();
+  });
+
+  it('gates promotion when the server has no full config', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-server-'));
+    const store = new SentinelStore(':memory:');
+    const app = await buildApp({ store, artifactsDir: dir, webDir: null });
+    expect((await app.inject({ method: 'GET', url: '/api/promote/preview' })).statusCode).toBe(503);
     await app.close();
     store.close();
   });

@@ -5,6 +5,8 @@ import type {
   FlakeStat,
   LlmCosts,
   PendingEscalation,
+  PromotePreview,
+  PromoteResult,
   RunDetailResponse,
   RunOverview,
   SummaryData,
@@ -94,6 +96,36 @@ export function useStartRun() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['active-run'] });
       qc.invalidateQueries({ queryKey: ['runs'] });
+    },
+  });
+}
+
+export function usePromotePreview(includeUnverified: boolean) {
+  return useQuery({
+    queryKey: ['promote-preview', includeUnverified],
+    queryFn: () =>
+      getJson<PromotePreview>(`/api/promote/preview?includeUnverified=${includeUnverified}`),
+  });
+}
+
+/** Apply reviewed heals into specs → branch → commit → (push + PR if a token is set). */
+export function useApplyPromotion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (opts: { includeUnverified?: boolean; push?: boolean }) => {
+      const res = await fetch('/api/promote/apply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(opts),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error((body as { error?: string })?.error ?? `HTTP ${res.status}`);
+      return body as PromoteResult;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['promote-preview'] });
+      qc.invalidateQueries({ queryKey: ['runs'] });
+      qc.invalidateQueries({ queryKey: ['summary'] });
     },
   });
 }
