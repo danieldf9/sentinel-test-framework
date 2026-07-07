@@ -7,6 +7,7 @@
  */
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, SentinelStore } from '@sentinel/core';
 import { buildApp } from './app.js';
@@ -31,6 +32,14 @@ export interface StudioServer {
 const DEFAULT_PORT = 4300;
 const HOST = '127.0.0.1';
 
+function safeUsername(): string | null {
+  try {
+    return os.userInfo().username || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Locate the built @sentinel/web dist, or null if it has not been built yet. */
 function resolveWebDir(): string | null {
   try {
@@ -53,7 +62,8 @@ export async function startStudioServer(opts: StudioServerOptions = {}): Promise
     );
   }
 
-  const app = await buildApp({ store, artifactsDir: loaded.artifactsDir, webDir });
+  const actor = process.env.USER ?? process.env.USERNAME ?? safeUsername() ?? 'studio';
+  const app = await buildApp({ store, artifactsDir: loaded.artifactsDir, webDir, actor });
   const port = opts.port ?? DEFAULT_PORT;
   await app.listen({ port, host: HOST });
   const url = `http://${HOST}:${port}`;

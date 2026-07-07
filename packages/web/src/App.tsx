@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react';
-import { useSummary } from './api';
+import { useEscalations, useSummary } from './api';
+import { Escalations } from './views/Escalations';
 import { Flake } from './views/Flake';
 import { LlmCosts } from './views/LlmCosts';
 import { RunDetail } from './views/RunDetail';
@@ -8,12 +9,15 @@ import { RunsList } from './views/RunsList';
 type View =
   | { name: 'runs' }
   | { name: 'run'; id: string }
+  | { name: 'escalations' }
   | { name: 'flake' }
   | { name: 'llm' };
 
 export function App(): JSX.Element {
   const [view, setView] = useState<View>({ name: 'runs' });
   const summary = useSummary();
+  const escalations = useEscalations();
+  const pending = escalations.data?.length ?? 0;
   const section = view.name === 'run' ? 'runs' : view.name;
 
   return (
@@ -29,6 +33,13 @@ export function App(): JSX.Element {
             onClick={() => setView({ name: 'runs' })}
           >
             Runs
+          </button>
+          <button
+            className={section === 'escalations' ? 'active' : ''}
+            onClick={() => setView({ name: 'escalations' })}
+          >
+            Escalations
+            {pending > 0 && <span className="count">{pending}</span>}
           </button>
           <button
             className={section === 'flake' ? 'active' : ''}
@@ -55,6 +66,7 @@ export function App(): JSX.Element {
         {view.name === 'run' && (
           <RunDetail runId={view.id} onBack={() => setView({ name: 'runs' })} />
         )}
+        {view.name === 'escalations' && <Escalations />}
         {view.name === 'flake' && <Flake />}
         {view.name === 'llm' && <LlmCosts />}
       </main>

@@ -110,6 +110,22 @@ export interface EscalationRow {
   question: EscalationQuestion | null;
 }
 
+export interface PendingEscalation {
+  id: number;
+  runId: string;
+  testId: string;
+  stepId: string;
+  question: EscalationQuestion;
+}
+
+export interface AnswerResult {
+  escalationId: number;
+  testId: string;
+  stepId: string;
+  redesign: boolean;
+  appliedDescriptor: string | null;
+}
+
 export interface RunDetail {
   tests: TestResultRow[];
   heals: HealRow[];

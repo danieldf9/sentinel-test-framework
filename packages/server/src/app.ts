@@ -1,6 +1,10 @@
 import path from 'node:path';
 import fastifyStatic from '@fastify/static';
-import type { SentinelStore } from '@sentinel/core';
+import {
+  applyEscalationAnswer,
+  type EscalationQuestion,
+  type SentinelStore,
+} from '@sentinel/core';
 import {
   buildRunSummary,
   queryFlakeStats,
@@ -16,6 +20,8 @@ export interface AppDeps {
   artifactsDir: string;
   /** Built @sentinel/web dist to serve as the SPA, or null to run API-only. */
   webDir: string | null;
+  /** Identity recorded when this server answers escalations (channel 'web'). */
+  actor?: string;
 }
 
 /** Recent runs to scan when resolving a single run's overview (local, single-user). */
@@ -45,6 +51,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return `/artifacts/${rel.split(path.sep).join('/')}`;
   };
 
+  // Rewrite the escalation's stored screenshot path into a servable URL.
+  const mapQuestion = (q: EscalationQuestion | null): EscalationQuestion | null =>
+    q ? { ...q, context: { ...q.context, screenshot: shotUrl(q.context?.screenshot ?? null) } } : q;
+
   app.get('/api/health', async () => ({ ok: true }));
 
   // Structured run summary (drop the GitHub-comment markdown field).
@@ -73,11 +83,37 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       screenshotBefore: shotUrl(h.screenshotBefore),
       screenshotAfter: shotUrl(h.screenshotAfter),
     }));
-    return { overview, detail: { ...detail, heals } };
+    const escalations = detail.escalations.map((e) => ({ ...e, question: mapQuestion(e.question) }));
+    return { overview, detail: { ...detail, heals, escalations } };
   });
 
   app.get('/api/flake', async () => queryFlakeStats(deps.store));
   app.get('/api/llm-costs', async () => queryLlmCosts(deps.store));
+
+  // ---- Escalations (the first write path: answering closes the loop) --------
+  app.get('/api/escalations', async () =>
+    deps.store.pendingEscalations().map((e) => ({ ...e, question: mapQuestion(e.question) })),
+  );
+
+  app.post<{ Params: { id: string }; Body: { choice?: string } }>(
+    '/api/escalations/:id/answer',
+    async (req, reply) => {
+      const id = Number(req.params.id);
+      const choice = (req.body?.choice ?? '').trim();
+      if (!Number.isInteger(id) || !choice) {
+        reply.code(400);
+        return { error: 'body must include a non-empty "choice" (candidate label or REDESIGN)' };
+      }
+      try {
+        return applyEscalationAnswer(deps.store, id, choice, deps.actor ?? 'studio', 'web');
+      } catch (err) {
+        const msg = (err as Error).message;
+        const code = /not found/.test(msg) ? 404 : /is already/.test(msg) ? 409 : 400;
+        reply.code(code);
+        return { error: msg };
+      }
+    },
+  );
 
   // SPA: serve the built web assets and fall back to index.html for client routes.
   if (deps.webDir) {

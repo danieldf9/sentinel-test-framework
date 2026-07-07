@@ -81,6 +81,83 @@ describe('Studio read API', () => {
     store.close();
   });
 
+  it('lists and answers escalations (write path), then 409s on re-answer', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-server-'));
+    const store = new SentinelStore(':memory:');
+    store.ensureRun('run-1', 'sha-1', 'auto');
+    const fp = {
+      tag: 'button',
+      role: 'button',
+      name: 'Add to bag',
+      text: 'Add to bag',
+      id: null,
+      testId: null,
+      classes: [],
+      attributes: {},
+      nearbyText: '',
+      labelText: '',
+      cssPath: 'body > button:nth-of-type(1)',
+    };
+    const escId = store.recordEscalation({
+      runId: 'run-1',
+      testId: 'shop.spec.ts::cart',
+      stepId: 's1',
+      question: {
+        test: 'shop.spec.ts::cart',
+        step: 's1',
+        intent: 'Add to cart button',
+        question: 'Which candidate matches?',
+        candidates: [
+          {
+            label: 'A',
+            descriptor: { kind: 'role', value: 'button', name: 'Add to bag', exact: true },
+            confidence: 0.7,
+            fingerprint: fp,
+          },
+        ],
+        context: { url: '/products', classification: 'LOCATOR_DRIFT', screenshot: null },
+      },
+    });
+
+    const app = await buildApp({ store, artifactsDir: dir, webDir: null, actor: 'tester' });
+
+    const pending = await app.inject({ method: 'GET', url: '/api/escalations' });
+    expect(pending.json()).toHaveLength(1);
+    expect(pending.json()[0].id).toBe(escId);
+
+    const answer = await app.inject({
+      method: 'POST',
+      url: `/api/escalations/${escId}/answer`,
+      payload: { choice: 'A' },
+    });
+    expect(answer.statusCode).toBe(200);
+    expect(answer.json().appliedDescriptor).toContain('Add to bag');
+
+    // The chosen candidate is now the cached primary → next run heals at Tier 0.
+    expect(store.getCacheEntry('shop.spec.ts::cart', 's1')?.primary).toBeTruthy();
+    // No longer pending.
+    expect((await app.inject({ method: 'GET', url: '/api/escalations' })).json()).toHaveLength(0);
+
+    // Re-answering the same escalation conflicts.
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/escalations/${escId}/answer`,
+      payload: { choice: 'A' },
+    });
+    expect(again.statusCode).toBe(409);
+
+    // Unknown escalation → 404.
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/api/escalations/9999/answer',
+      payload: { choice: 'A' },
+    });
+    expect(missing.statusCode).toBe(404);
+
+    await app.close();
+    store.close();
+  });
+
   it('reports no-runs on an empty store', async () => {
     dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-server-'));
     const store = new SentinelStore(':memory:');
