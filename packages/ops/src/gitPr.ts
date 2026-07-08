@@ -68,7 +68,11 @@ export function parseGitHubRemote(url: string): GitHubRepo | null {
 
 function git(args: string[], cwd: string): { status: number; stdout: string; stderr: string } {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  return { status: r.status ?? 1, stdout: (r.stdout ?? '').trim(), stderr: (r.stderr ?? '').trim() };
+  return {
+    status: r.status ?? 1,
+    stdout: (r.stdout ?? '').trim(),
+    stderr: (r.stderr ?? '').trim(),
+  };
 }
 
 /**

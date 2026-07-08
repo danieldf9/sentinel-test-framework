@@ -19,7 +19,11 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
   background: var(--bg);
   color: var(--ink);
   font-size: 14px;
@@ -340,7 +344,9 @@ tbody tr.clickable:hover {
   align-items: center;
   gap: 10px;
   font-size: 13px;
-  transition: border-color 0.12s, background 0.12s;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
 }
 .cand:hover:not(:disabled) {
   border-color: var(--accent);

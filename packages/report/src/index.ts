@@ -4,12 +4,7 @@ export * from './queries.js';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { sha1, type SentinelStore } from '@sentinel/core';
-import {
-  queryFlakeStats,
-  queryLlmCosts,
-  queryRunDetail,
-  queryRunsOverview,
-} from './queries.js';
+import { queryFlakeStats, queryLlmCosts, queryRunDetail, queryRunsOverview } from './queries.js';
 
 export interface ReportOptions {
   outDir: string;

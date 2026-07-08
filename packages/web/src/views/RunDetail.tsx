@@ -3,13 +3,7 @@ import { useActiveRun, useRun } from '../api';
 import type { HealRow } from '../types';
 import { formatDuration, ModeBadge, StatusBadge, StepBadge } from '../ui';
 
-export function RunDetail({
-  runId,
-  onBack,
-}: {
-  runId: string;
-  onBack: () => void;
-}): JSX.Element {
+export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }): JSX.Element {
   const { data, isLoading, isError } = useRun(runId);
   const active = useActiveRun();
 
@@ -28,7 +22,9 @@ export function RunDetail({
         <h1 className="page-title">
           <code>{overview.id}</code>
         </h1>
-        {running ? <span className="badge b-blue running-dot">running…</span> : (
+        {running ? (
+          <span className="badge b-blue running-dot">running…</span>
+        ) : (
           <StatusBadge status={overview.status} />
         )}
       </div>

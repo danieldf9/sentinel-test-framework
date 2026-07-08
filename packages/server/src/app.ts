@@ -91,7 +91,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       screenshotBefore: shotUrl(h.screenshotBefore),
       screenshotAfter: shotUrl(h.screenshotAfter),
     }));
-    const escalations = detail.escalations.map((e) => ({ ...e, question: mapQuestion(e.question) }));
+    const escalations = detail.escalations.map((e) => ({
+      ...e,
+      question: mapQuestion(e.question),
+    }));
     const steps = queryRunSteps(deps.store, req.params.id);
     const running = runner?.status()?.runId === req.params.id && runner.isActive();
     return { overview, running, detail: { ...detail, heals, escalations, steps } };

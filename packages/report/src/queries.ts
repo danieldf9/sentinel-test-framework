@@ -283,19 +283,17 @@ export function queryLlmCosts(store: SentinelStore): LlmCosts {
             SUM(input_tokens) input_tokens, SUM(output_tokens) output_tokens,
             SUM(cost_usd) cost, AVG(latency_ms) avg_latency
      FROM llm_calls GROUP BY provider, model, purpose ORDER BY cost DESC`,
-  ).map(
-    (l): LlmCostRow => ({
-      provider: l.provider as string,
-      model: l.model as string,
-      purpose: l.purpose as string,
-      calls: l.calls as number,
-      failures: l.failures as number,
-      inputTokens: l.input_tokens as number,
-      outputTokens: l.output_tokens as number,
-      costUsd: l.cost as number,
-      avgLatencyMs: l.avg_latency as number,
-    }),
-  );
+  ).map((l): LlmCostRow => ({
+    provider: l.provider as string,
+    model: l.model as string,
+    purpose: l.purpose as string,
+    calls: l.calls as number,
+    failures: l.failures as number,
+    inputTokens: l.input_tokens as number,
+    outputTokens: l.output_tokens as number,
+    costUsd: l.cost as number,
+    avgLatencyMs: l.avg_latency as number,
+  }));
   const totalCostUsd = all(store, 'SELECT COALESCE(SUM(cost_usd),0) c FROM llm_calls')[0]!
     .c as number;
   return { rows, totalCostUsd };

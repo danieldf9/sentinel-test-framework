@@ -16,12 +16,7 @@ export function RunsList({ onOpenRun }: { onOpenRun: (id: string) => void }): JS
         <button
           className="btn-primary"
           disabled={running || startRun.isPending}
-          onClick={() =>
-            startRun.mutate(
-              {},
-              { onSuccess: (r) => onOpenRun(r.runId) },
-            )
-          }
+          onClick={() => startRun.mutate({}, { onSuccess: (r) => onOpenRun(r.runId) })}
         >
           {running ? 'Run in progress…' : '▶ Run suite'}
         </button>

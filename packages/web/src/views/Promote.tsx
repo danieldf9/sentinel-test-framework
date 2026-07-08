@@ -36,9 +36,7 @@ export function Promote(): JSX.Element {
         Include UNVERIFIED heals (review carefully)
       </label>
 
-      {preview.isError && (
-        <div className="esc-error">{(preview.error as Error).message}</div>
-      )}
+      {preview.isError && <div className="esc-error">{(preview.error as Error).message}</div>}
 
       <div className="card">
         <h2>Planned changes</h2>
@@ -109,8 +107,7 @@ export function Promote(): JSX.Element {
             ) : (
               result.committed && (
                 <p className="mono-sm">
-                  Push <code>{result.branch}</code> and open a PR, or set a GitHub token and
-                  re-run.
+                  Push <code>{result.branch}</code> and open a PR, or set a GitHub token and re-run.
                 </p>
               )
             )}

@@ -69,7 +69,13 @@ export class RunController {
       } catch {
         // Store may be closed during shutdown — leave the run un-finalized.
       }
-      this.last = { runId, running: false, startedAt: this.active?.startedAt ?? Date.now(), output, status };
+      this.last = {
+        runId,
+        running: false,
+        startedAt: this.active?.startedAt ?? Date.now(),
+        output,
+        status,
+      };
       this.active = null;
     };
     let settled = false;
