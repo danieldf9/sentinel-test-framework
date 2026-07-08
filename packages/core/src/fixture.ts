@@ -13,7 +13,7 @@ import {
 import { classifyFailure } from './diagnosis.js';
 import { refineDiagnosis } from './diagnosisLlm.js';
 import { sentinelDomAgent, type DomAgentOptions } from './domAgent.js';
-import { makeTestId, makeStepId } from './ids.js';
+import { makeTestId, resolveStepId } from './ids.js';
 import {
   FatalHealError,
   makeTier0Resolver,
@@ -57,10 +57,15 @@ function detectGitSha(cwd: string): string | null {
 interface StepArgs {
   locator: Locator;
   intent: string;
+  /** Stable identity for flow-authored steps (Phase 2 — D38). When present it is
+   * the step's cache/heal key, so editing the intent or reordering steps preserves
+   * healing history. Omitted for hand-authored specs (identity derives from intent). */
+  stepKey?: string;
 }
 
 export class SentinelActions {
   private readonly occurrences = new Map<string, number>();
+  private readonly usedStepKeys = new Set<string>();
   private readonly groupStack: string[] = [];
   private readonly recorder: ArtifactRecorder;
   private lastNavStatus: number | null = null;
@@ -101,11 +106,8 @@ export class SentinelActions {
     );
   }
 
-  private nextStepId(action: ActionKind, intent: string): string {
-    const key = `${action}|${intent}`;
-    const n = this.occurrences.get(key) ?? 0;
-    this.occurrences.set(key, n + 1);
-    return makeStepId(action, intent, n);
+  private nextStepId(action: ActionKind, intent: string, stepKey?: string): string {
+    return resolveStepId(action, intent, stepKey, this.occurrences, this.usedStepKeys, this.testId);
   }
 
   private pageUrl(): string {
@@ -226,7 +228,7 @@ export class SentinelActions {
     args: StepArgs,
     exec: (loc: Locator) => Promise<void>,
   ): Promise<void> {
-    const stepId = this.nextStepId(action, args.intent);
+    const stepId = this.nextStepId(action, args.intent, args.stepKey);
     const started = Date.now();
     await this.recorder.record(this.page, { stepId, action, label: 'before' });
 

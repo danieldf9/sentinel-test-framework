@@ -68,7 +68,7 @@ export {
   descriptorToCode,
 } from './descriptors.js';
 export { sentinelDomAgent, type DomAgentOptions } from './domAgent.js';
-export { makeTestId, makeStepId, sha1 } from './ids.js';
+export { makeTestId, makeStepId, sha1, assertValidStepKey, resolveStepId } from './ids.js';
 export { ArtifactRecorder, testArtifactDirName } from './capture.js';
 export type {
   ActionKind,
