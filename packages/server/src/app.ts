@@ -16,6 +16,7 @@ import {
 } from '@sentinel/report';
 import { previewPromotions, promoteAndOpenPr } from '@sentinel/ops';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerFlowRoutes } from './flowRoutes.js';
 import { RunController } from './runController.js';
 
 export interface AppDeps {
@@ -191,6 +192,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       });
     },
   );
+
+  // ---- Flows (block-editor backend — D39) -----------------------------------
+  if (deps.loaded) {
+    registerFlowRoutes(app, {
+      store: deps.store,
+      rootDir: deps.loaded.rootDir,
+      writeBlocked: () => runBusy(),
+    });
+  }
 
   // SPA: serve the built web assets and fall back to index.html for client routes.
   if (deps.webDir) {

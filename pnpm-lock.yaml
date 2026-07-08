@@ -192,9 +192,15 @@ importers:
       '@fastify/static':
         specifier: ^8.0.3
         version: 8.3.0
+      '@playwright/test':
+        specifier: ^1.49.1
+        version: 1.61.1
       '@sentinel/core':
         specifier: workspace:*
         version: link:../core
+      '@sentinel/flow':
+        specifier: workspace:*
+        version: link:../flow
       '@sentinel/ops':
         specifier: workspace:*
         version: link:../ops
