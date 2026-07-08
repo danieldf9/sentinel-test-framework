@@ -424,3 +424,34 @@ emits them as literals into the generated spec); humans never have to invent the
 Known deferred sibling: `makeTestId(file, titlePath)` has the same fragility one level
 up (file moves / title edits orphan a whole test's state) — a stable `testKey` is
 deliberately NOT part of this change and will be designed with the flow format.
+
+## D39 — Flows: JSON source of truth, generated specs, importer, Smart Recorder
+
+The no-code layer never round-trips arbitrary TypeScript. A **flow** (`*.flow.json`, one
+flow = one test) is the source of truth for UI-authored tests: steps are the five `s.*`
+verbs, locators are stored as CandidateDescriptors (the same shape the healing cache
+uses), every keyed step carries a stable stepKey (D38), and consecutive steps may share a
+`group` (compiled as `s.step` blocks). Saving compiles the flow to a colocated
+`*.flow.spec.ts` marked `@sentinel-generated` — an ordinary sentinel spec that Playwright,
+CI, and the healing pipeline treat like any other. Renaming a flow's title migrates the
+test's history (`store.rekeyTest`), because the title is part of makeTestId.
+
+The **importer** lifts hand-authored specs into flows, all-or-nothing per file: every test
+must be linear `await s.*` calls (one level of `s.step` allowed) with literal intents and
+direct `page.getBy*()` locators; anything else leaves the file view-only, because a
+partial import would double-run or drop steps. Import minting rekeys history twice over:
+`rekeyTest` follows the test to its generated file, and `rekeyStep` maps the fixture's
+derived (action, intent, occurrence) ids to the minted stepKeys — the importer recomputes
+those ids with the exact counter logic the fixture uses. The original spec is retired as
+`<name>.imported` (reversible, and out of Playwright's glob).
+
+The **Smart Recorder** opens a headed browser locally and captures clicks/fills with
+capture-phase listeners that fingerprint elements using the SAME `sentinelDomAgent` the
+healing tiers use, serialized into the page. Drafts get heuristic intents immediately
+(accessible name + role noun); on save, one batched LLM call (when a provider is
+configured) rewrites them with page context, falling back silently to the heuristics.
+Passwords are masked at capture and never leave the page. Saving mints stepKeys, writes
+the flow + generated spec, and seeds the Tier-0 locator cache from the recorded
+fingerprints — a recorded test is healable on its very first run. Scope is deliberately
+MVP: top frame only, click/fill/goto (selects, hovers, iframes and assertions are
+authored in the editor afterwards), one session at a time.
