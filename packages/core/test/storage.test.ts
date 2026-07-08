@@ -151,6 +151,34 @@ describe('SentinelStore rekeyStep (Phase 2 stepKey migration)', () => {
     expect(s.rekeyStep('t1', 'k7f3a9', 'k7f3a9')).toBe(0);
     s.close();
   });
+
+  it('rekeyTest moves a whole test identity (importer moves the file — D39)', () => {
+    const s = mem();
+    s.ensureRun('r1', 'sha', 'auto');
+    const oldId = 'specs/shop.spec.ts::shop.spec.ts > cart';
+    const newId = 'specs/cart.flow.spec.ts::cart.flow.spec.ts > cart';
+    s.upsertCacheEntry({
+      testId: oldId,
+      stepId: 'k1',
+      primary: { kind: 'css', value: '#x' },
+      alternates: [],
+      fingerprint: makeFp({}),
+      intent: 'i',
+      lastVerifiedAt: 1,
+    });
+    s.recordFlakeStat(oldId, 'sha', 'r1', 'passed');
+    s.recordFlakeStat(oldId, 'sha', 'r1', 'failed');
+    expect(s.isKnownFlaky(oldId, 'sha')).toBe(true);
+
+    const moved = s.rekeyTest(oldId, newId);
+    expect(moved).toBeGreaterThanOrEqual(3);
+    expect(s.getCacheEntry(newId, 'k1')).not.toBeNull();
+    expect(s.getCacheEntry(oldId, 'k1')).toBeNull();
+    // Flake history follows the test to its new identity.
+    expect(s.isKnownFlaky(oldId, 'sha')).toBe(false);
+    expect(s.isKnownFlaky(newId, 'sha')).toBe(true);
+    s.close();
+  });
 });
 
 describe('export / import (CI portability)', () => {

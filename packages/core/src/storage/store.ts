@@ -341,6 +341,29 @@ export class SentinelStore {
     return move();
   }
 
+  /**
+   * Re-point an entire test's history to a new test id, atomically. Used when the
+   * flow importer moves a test into a generated spec file: the file path is part
+   * of makeTestId, so without this every table would orphan on import (D39).
+   * Returns the number of rows moved.
+   */
+  rekeyTest(oldTestId: string, newTestId: string): number {
+    if (oldTestId === newTestId) return 0;
+    const move = this.db.transaction((): number => {
+      let moved = 0;
+      moved += this.db
+        .prepare('UPDATE OR REPLACE locator_cache SET test_id = ? WHERE test_id = ?')
+        .run(newTestId, oldTestId).changes;
+      for (const table of ['heals', 'escalations', 'steps', 'test_results', 'flake_stats']) {
+        moved += this.db
+          .prepare(`UPDATE ${table} SET test_id = ? WHERE test_id = ?`)
+          .run(newTestId, oldTestId).changes;
+      }
+      return moved;
+    });
+    return move();
+  }
+
   // ---- flake stats -------------------------------------------------------------------
 
   recordFlakeStat(testId: string, gitSha: string | null, runId: string, status: string): void {
