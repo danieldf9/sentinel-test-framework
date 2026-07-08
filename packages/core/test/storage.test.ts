@@ -93,6 +93,66 @@ describe('SentinelStore escalations', () => {
   });
 });
 
+describe('SentinelStore rekeyStep (Phase 2 stepKey migration)', () => {
+  it('moves cache, heals, escalations and steps to the new step id', () => {
+    const s = mem();
+    s.ensureRun('r1', null, 'auto');
+    s.upsertCacheEntry({
+      testId: 't1',
+      stepId: 'old',
+      primary: { kind: 'css', value: '#x' },
+      alternates: [],
+      fingerprint: makeFp({}),
+      intent: 'i',
+      lastVerifiedAt: 1,
+    });
+    s.recordHeal({
+      runId: 'r1',
+      testId: 't1',
+      stepId: 'old',
+      intent: 'i',
+      oldLocator: 'a',
+      newLocator: 'b',
+      tier: 0,
+      confidence: 1,
+      mode: 'HUMAN',
+      reasoning: '',
+      screenshotBefore: null,
+      screenshotAfter: null,
+      gitSha: null,
+    });
+    s.recordStep({
+      runId: 'r1',
+      testId: 't1',
+      stepId: 'old',
+      action: 'click',
+      intent: 'i',
+      groupPath: '',
+      status: 'passed',
+      tier: null,
+      confidence: null,
+      classification: null,
+      durationMs: 1,
+      url: '',
+    });
+
+    const moved = s.rekeyStep('t1', 'old', 'k7f3a9');
+    expect(moved).toBeGreaterThanOrEqual(3);
+
+    // History now lives under the new key, and the old key is empty.
+    expect(s.getCacheEntry('t1', 'old')).toBeNull();
+    expect(s.getCacheEntry('t1', 'k7f3a9')!.primary).toEqual({ kind: 'css', value: '#x' });
+    const healRows = s.db
+      .prepare('SELECT step_id FROM heals WHERE test_id = ?')
+      .all('t1') as Array<{ step_id: string }>;
+    expect(healRows.every((r) => r.step_id === 'k7f3a9')).toBe(true);
+
+    // No-op when the ids match.
+    expect(s.rekeyStep('t1', 'k7f3a9', 'k7f3a9')).toBe(0);
+    s.close();
+  });
+});
+
 describe('export / import (CI portability)', () => {
   it('round-trips and merges idempotently', () => {
     const a = mem();

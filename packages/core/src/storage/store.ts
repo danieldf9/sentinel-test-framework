@@ -311,6 +311,36 @@ export class SentinelStore {
     return rows.map((r) => ({ question: JSON.parse(r.question_json), answer: r.answer }));
   }
 
+  // ---- step re-keying (Phase 2 stepKey migration — D38) ----------------------
+
+  /**
+   * Re-point a step's history from one step id to another, atomically. Used when a
+   * hand-authored spec is imported into a flow and its steps are assigned stable
+   * stepKeys: the locator cache, heals, escalations and step rows follow the logical
+   * step to its new key instead of resetting to a cold start. Returns the number of
+   * rows moved across all tables.
+   */
+  rekeyStep(testId: string, oldStepId: string, newStepId: string): number {
+    if (oldStepId === newStepId) return 0;
+    const move = this.db.transaction((): number => {
+      let moved = 0;
+      // locator_cache PK is (test_id, step_id): REPLACE so an existing new-key row
+      // yields to the migrated history rather than raising a constraint error.
+      moved += this.db
+        .prepare(
+          'UPDATE OR REPLACE locator_cache SET step_id = ? WHERE test_id = ? AND step_id = ?',
+        )
+        .run(newStepId, testId, oldStepId).changes;
+      for (const table of ['heals', 'escalations', 'steps']) {
+        moved += this.db
+          .prepare(`UPDATE ${table} SET step_id = ? WHERE test_id = ? AND step_id = ?`)
+          .run(newStepId, testId, oldStepId).changes;
+      }
+      return moved;
+    });
+    return move();
+  }
+
   // ---- flake stats -------------------------------------------------------------------
 
   recordFlakeStat(testId: string, gitSha: string | null, runId: string, status: string): void {
