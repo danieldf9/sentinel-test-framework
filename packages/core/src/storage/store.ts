@@ -223,6 +223,22 @@ export class SentinelStore {
     return row.n;
   }
 
+  /** Distinct steps with reviewed-but-unpromoted heals — the Studio "ready to
+   * promote" badge. Cheap DB count only; the file-reading planPromotions stays
+   * the authority on what is actually promotable. */
+  countUnpromotedHeals(opts: { includeUnverified?: boolean } = {}): number {
+    const modes = opts.includeUnverified ? ['AUTO', 'HUMAN', 'UNVERIFIED'] : ['AUTO', 'HUMAN'];
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM (
+           SELECT DISTINCT test_id, step_id FROM heals
+           WHERE mode IN (${modes.map(() => '?').join(',')}) AND promoted = 0
+         )`,
+      )
+      .get(...modes) as { n: number };
+    return row.n;
+  }
+
   healCountForTest(runId: string, testId: string): number {
     const row = this.db
       .prepare('SELECT COUNT(*) AS n FROM heals WHERE run_id = ? AND test_id = ?')
@@ -309,6 +325,59 @@ export class SentinelStore {
       )
       .all(testId, stepId) as Array<{ question_json: string; answer: string }>;
     return rows.map((r) => ({ question: JSON.parse(r.question_json), answer: r.answer }));
+  }
+
+  // ---- step re-keying (Phase 2 stepKey migration — D38) ----------------------
+
+  /**
+   * Re-point a step's history from one step id to another, atomically. Used when a
+   * hand-authored spec is imported into a flow and its steps are assigned stable
+   * stepKeys: the locator cache, heals, escalations and step rows follow the logical
+   * step to its new key instead of resetting to a cold start. Returns the number of
+   * rows moved across all tables.
+   */
+  rekeyStep(testId: string, oldStepId: string, newStepId: string): number {
+    if (oldStepId === newStepId) return 0;
+    const move = this.db.transaction((): number => {
+      let moved = 0;
+      // locator_cache PK is (test_id, step_id): REPLACE so an existing new-key row
+      // yields to the migrated history rather than raising a constraint error.
+      moved += this.db
+        .prepare(
+          'UPDATE OR REPLACE locator_cache SET step_id = ? WHERE test_id = ? AND step_id = ?',
+        )
+        .run(newStepId, testId, oldStepId).changes;
+      for (const table of ['heals', 'escalations', 'steps']) {
+        moved += this.db
+          .prepare(`UPDATE ${table} SET step_id = ? WHERE test_id = ? AND step_id = ?`)
+          .run(newStepId, testId, oldStepId).changes;
+      }
+      return moved;
+    });
+    return move();
+  }
+
+  /**
+   * Re-point an entire test's history to a new test id, atomically. Used when the
+   * flow importer moves a test into a generated spec file: the file path is part
+   * of makeTestId, so without this every table would orphan on import (D39).
+   * Returns the number of rows moved.
+   */
+  rekeyTest(oldTestId: string, newTestId: string): number {
+    if (oldTestId === newTestId) return 0;
+    const move = this.db.transaction((): number => {
+      let moved = 0;
+      moved += this.db
+        .prepare('UPDATE OR REPLACE locator_cache SET test_id = ? WHERE test_id = ?')
+        .run(newTestId, oldTestId).changes;
+      for (const table of ['heals', 'escalations', 'steps', 'test_results', 'flake_stats']) {
+        moved += this.db
+          .prepare(`UPDATE ${table} SET test_id = ? WHERE test_id = ?`)
+          .run(newTestId, oldTestId).changes;
+      }
+      return moved;
+    });
+    return move();
   }
 
   // ---- flake stats -------------------------------------------------------------------

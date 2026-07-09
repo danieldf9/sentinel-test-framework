@@ -57,6 +57,41 @@ describe('SentinelStore heal caps', () => {
     expect(s.healCountForTest('r1', 't1')).toBe(2);
     s.close();
   });
+
+  it('counts distinct unpromoted reviewed steps for the promote badge', () => {
+    const s = mem();
+    s.ensureRun('r1', null, 'auto');
+    const heal = (
+      testId: string,
+      stepId: string,
+      mode: 'AUTO' | 'HUMAN' | 'UNVERIFIED' | 'SUGGESTED',
+    ) =>
+      s.recordHeal({
+        runId: 'r1',
+        testId,
+        stepId,
+        intent: 'i',
+        oldLocator: 'a',
+        newLocator: 'b',
+        tier: 0,
+        confidence: 0.95,
+        mode,
+        reasoning: '',
+        screenshotBefore: null,
+        screenshotAfter: null,
+        gitSha: null,
+      });
+    heal('t1', 's1', 'AUTO');
+    heal('t1', 's1', 'AUTO'); // same step healed twice → one promotable step
+    heal('t1', 's2', 'HUMAN');
+    heal('t2', 's1', 'UNVERIFIED');
+    heal('t2', 's2', 'SUGGESTED'); // suggestions are never promotable
+    expect(s.countUnpromotedHeals()).toBe(2);
+    expect(s.countUnpromotedHeals({ includeUnverified: true })).toBe(3);
+    s.db.prepare(`UPDATE heals SET promoted = 1 WHERE test_id = 't1'`).run();
+    expect(s.countUnpromotedHeals()).toBe(0);
+    s.close();
+  });
 });
 
 describe('SentinelStore flake detection', () => {
@@ -89,6 +124,94 @@ describe('SentinelStore escalations', () => {
     s.answerEscalation(id, 'A', 'daniel', 'cli');
     expect(s.pendingEscalations()).toHaveLength(0);
     expect(s.answeredEscalationsForStep('t1', 's1')[0]!.answer).toBe('A');
+    s.close();
+  });
+});
+
+describe('SentinelStore rekeyStep (Phase 2 stepKey migration)', () => {
+  it('moves cache, heals, escalations and steps to the new step id', () => {
+    const s = mem();
+    s.ensureRun('r1', null, 'auto');
+    s.upsertCacheEntry({
+      testId: 't1',
+      stepId: 'old',
+      primary: { kind: 'css', value: '#x' },
+      alternates: [],
+      fingerprint: makeFp({}),
+      intent: 'i',
+      lastVerifiedAt: 1,
+    });
+    s.recordHeal({
+      runId: 'r1',
+      testId: 't1',
+      stepId: 'old',
+      intent: 'i',
+      oldLocator: 'a',
+      newLocator: 'b',
+      tier: 0,
+      confidence: 1,
+      mode: 'HUMAN',
+      reasoning: '',
+      screenshotBefore: null,
+      screenshotAfter: null,
+      gitSha: null,
+    });
+    s.recordStep({
+      runId: 'r1',
+      testId: 't1',
+      stepId: 'old',
+      action: 'click',
+      intent: 'i',
+      groupPath: '',
+      status: 'passed',
+      tier: null,
+      confidence: null,
+      classification: null,
+      durationMs: 1,
+      url: '',
+    });
+
+    const moved = s.rekeyStep('t1', 'old', 'k7f3a9');
+    expect(moved).toBeGreaterThanOrEqual(3);
+
+    // History now lives under the new key, and the old key is empty.
+    expect(s.getCacheEntry('t1', 'old')).toBeNull();
+    expect(s.getCacheEntry('t1', 'k7f3a9')!.primary).toEqual({ kind: 'css', value: '#x' });
+    const healRows = s.db
+      .prepare('SELECT step_id FROM heals WHERE test_id = ?')
+      .all('t1') as Array<{ step_id: string }>;
+    expect(healRows.every((r) => r.step_id === 'k7f3a9')).toBe(true);
+
+    // No-op when the ids match.
+    expect(s.rekeyStep('t1', 'k7f3a9', 'k7f3a9')).toBe(0);
+    s.close();
+  });
+
+  it('rekeyTest moves a whole test identity (importer moves the file — D39)', () => {
+    const s = mem();
+    s.ensureRun('r1', 'sha', 'auto');
+    const oldId = 'specs/shop.spec.ts::shop.spec.ts > cart';
+    const newId = 'specs/cart.flow.spec.ts::cart.flow.spec.ts > cart';
+    s.upsertCacheEntry({
+      testId: oldId,
+      stepId: 'k1',
+      primary: { kind: 'css', value: '#x' },
+      alternates: [],
+      fingerprint: makeFp({}),
+      intent: 'i',
+      lastVerifiedAt: 1,
+    });
+    s.recordFlakeStat(oldId, 'sha', 'r1', 'passed');
+    s.recordFlakeStat(oldId, 'sha', 'r1', 'failed');
+    expect(s.isKnownFlaky(oldId, 'sha')).toBe(true);
+
+    const moved = s.rekeyTest(oldId, newId);
+    expect(moved).toBeGreaterThanOrEqual(3);
+    expect(s.getCacheEntry(newId, 'k1')).not.toBeNull();
+    expect(s.getCacheEntry(oldId, 'k1')).toBeNull();
+    // Flake history follows the test to its new identity.
+    expect(s.isKnownFlaky(oldId, 'sha')).toBe(false);
+    expect(s.isKnownFlaky(newId, 'sha')).toBe(true);
     s.close();
   });
 });

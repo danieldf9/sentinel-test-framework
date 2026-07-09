@@ -11,12 +11,18 @@ import {
   SentinelStore,
   type DbExport,
 } from '@sentinel/core';
+import {
+  applyPromotions,
+  finalizeRun,
+  planPromotions,
+  startRun,
+  waitForExit,
+  type RunSummary,
+} from '@sentinel/ops';
 import { createProvider } from '@sentinel/providers';
 import { buildRunSummary, generateReport } from '@sentinel/report';
 import { migrateDirectory } from './migrate.js';
-import { applyPromotions, planPromotions } from './promote.js';
 import { selectOption } from './prompt.js';
-import { quoteForShell } from './shell.js';
 import { buildWorkflowTemplate, CONFIG_TEMPLATE, detectPackageManager } from './templates.js';
 
 const program = new Command();
@@ -63,46 +69,47 @@ program
     async (playwrightArgs: string[], opts: { grep?: string; project?: string; heal?: string }) => {
       const loaded = await loadConfig(process.cwd());
       const store = new SentinelStore(loaded.dbPath);
-      // CI sets SENTINEL_RUN_ID (e.g. gh-<run_id>-shard-<n>) so shard runs can
-      // be aggregated later with `sentinel summary --run-prefix`.
-      const runId =
-        process.env.SENTINEL_RUN_ID ?? `run-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-      const gitSha = gitShaOrNull();
-      const healMode = opts.heal ?? loaded.config.healing.mode;
-      store.ensureRun(runId, gitSha, healMode);
-
-      const args = ['playwright', 'test'];
-      if (opts.grep) args.push('--grep', opts.grep);
-      if (opts.project) args.push('--project', opts.project);
-      args.push(...playwrightArgs);
-
-      const result = spawnSync(
-        'npx',
-        args.map((a) => quoteForShell(a)),
-        {
-          stdio: 'inherit',
-          shell: true,
-          env: {
-            ...process.env,
-            SENTINEL_RUN_ID: runId,
-            ...(opts.heal ? { SENTINEL_HEAL: opts.heal } : {}),
-          },
-        },
-      );
-
-      const summary = summarizeRun(store, runId);
-      const status =
-        result.status !== 0
-          ? 'failed'
-          : summary.unverifiedHeals > 0
-            ? 'passed_unverified'
-            : 'passed';
-      store.finishRun(runId, status, summary);
+      // Run orchestration is shared with the Studio server via @sentinel/ops so
+      // the two never fork. The CLI streams Playwright output to the terminal
+      // (stdio: 'inherit') and blocks until the child exits.
+      const { runId, child } = startRun(store, loaded, {
+        grep: opts.grep,
+        project: opts.project,
+        heal: opts.heal,
+        playwrightArgs,
+        stdio: 'inherit',
+      });
+      const code = await waitForExit(child);
+      const { status, summary } = finalizeRun(store, runId, code);
       printSummary(runId, status, summary);
       store.close();
-      process.exit(result.status ?? 1);
+      process.exit(code ?? 1);
     },
   );
+
+program
+  .command('studio')
+  .description('Launch the Sentinel Studio web dashboard (local: review heals, escalations, runs)')
+  .option('--port <n>', 'port to listen on', '4300')
+  .option('--cwd <dir>', 'project directory to load config/state from (defaults to cwd)')
+  .option('--no-open', 'do not open a browser automatically')
+  .action(async (opts: { port: string; cwd?: string; open?: boolean }) => {
+    // Loaded lazily so the CLI's common paths never pay for Fastify's startup.
+    const { startStudioServer } = await import('@sentinel/server');
+    const server = await startStudioServer({
+      port: Number(opts.port),
+      open: opts.open,
+      cwd: opts.cwd ? path.resolve(opts.cwd) : undefined,
+    });
+    console.log(`\nSentinel Studio running at ${server.url}`);
+    console.log('Press Ctrl+C to stop.');
+    const shutdown = async () => {
+      await server.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+  });
 
 const db = program.command('db').description('Export/import the Sentinel state database');
 
@@ -458,47 +465,6 @@ program
     }
     process.exit(ok ? 0 : 1);
   });
-
-function gitShaOrNull(): string | null {
-  const r = spawnSync('git', ['rev-parse', 'HEAD'], { shell: true, encoding: 'utf8' });
-  return r.status === 0 ? r.stdout.trim() : null;
-}
-
-interface RunSummary {
-  tests: number;
-  passed: number;
-  failed: number;
-  heals: number;
-  autoHeals: number;
-  unverifiedHeals: number;
-  escalations: number;
-  [key: string]: number;
-}
-
-function summarizeRun(store: SentinelStore, runId: string): RunSummary {
-  const q = <T>(sql: string): T => store.db.prepare(sql).get(runId) as T;
-  const tests = q<{ n: number }>('SELECT COUNT(*) n FROM test_results WHERE run_id = ?').n;
-  const passed = q<{ n: number }>(
-    "SELECT COUNT(*) n FROM test_results WHERE run_id = ? AND status LIKE 'passed%'",
-  ).n;
-  const heals = q<{ n: number }>('SELECT COUNT(*) n FROM heals WHERE run_id = ?').n;
-  const autoHeals = q<{ n: number }>(
-    "SELECT COUNT(*) n FROM heals WHERE run_id = ? AND mode = 'AUTO'",
-  ).n;
-  const unverifiedHeals = q<{ n: number }>(
-    "SELECT COUNT(*) n FROM heals WHERE run_id = ? AND mode = 'UNVERIFIED'",
-  ).n;
-  const escalations = q<{ n: number }>('SELECT COUNT(*) n FROM escalations WHERE run_id = ?').n;
-  return {
-    tests,
-    passed,
-    failed: tests - passed,
-    heals,
-    autoHeals,
-    unverifiedHeals,
-    escalations,
-  };
-}
 
 function printSummary(runId: string, status: string, s: RunSummary): void {
   console.log('\n── Sentinel run summary ─────────────────────────────');

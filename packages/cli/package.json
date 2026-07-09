@@ -18,8 +18,10 @@
   },
   "dependencies": {
     "@sentinel/core": "workspace:*",
+    "@sentinel/ops": "workspace:*",
     "@sentinel/providers": "workspace:*",
     "@sentinel/report": "workspace:*",
+    "@sentinel/server": "workspace:*",
     "commander": "^12.1.0",
     "typescript": "^5.7.2"
   },
