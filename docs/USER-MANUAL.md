@@ -362,6 +362,16 @@ npx sentinel report
 # → .sentinel/report/index.html — open it in a browser
 ```
 
+**Step 5 — Or skip the static report and open the live dashboard** (same directory,
+`examples/tests`):
+
+```bash
+npx sentinel studio
+# → opens http://127.0.0.1:4300 in your browser
+```
+
+From the repo root instead, `pnpm studio` does the same thing without needing to `cd`.
+
 ## 9. Watch it heal: the chaos test
 
 From the repo root:
@@ -1087,6 +1097,17 @@ the same planner behind `sentinel promote`.
 npx sentinel studio            # starts on http://127.0.0.1:4300 and opens your browser
 npx sentinel studio --port 4400 --no-open
 ```
+
+> **Run this from your project directory** — the one containing `sentinel.config.ts`
+> (or a subfolder of it), not an unrelated directory. `npx` resolves `sentinel` to
+> whatever is locally installed in the current package; if nothing is, it falls back to
+> fetching an unrelated package also named `sentinel` from the public npm registry,
+> which silently does nothing. If `npx sentinel studio` produces no output at all,
+> that's the symptom — run `npx sentinel doctor` first to confirm you're picking up the
+> right CLI (it prints Sentinel's own diagnostics), or use `--cwd <dir>` to point an
+> already-resolving `sentinel` at the right project. **In this repo's own demo**, run it
+> from `examples/tests` (see [section 8](#8-first-contact-the-demo-walkthrough)), or
+> from the repo root via `pnpm studio`.
 
 Studio is **local-first and single-user**: it binds to `127.0.0.1` only, has no login,
 and records your OS username as the actor on every action so the audit trail still says

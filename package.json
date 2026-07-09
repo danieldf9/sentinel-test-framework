@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "demo:serve": "node examples/demo-app/server.mjs",
     "chaos": "node examples/tests/chaos-test.mjs",
-    "validate:workflows": "node scripts/validate-workflows.mjs"
+    "validate:workflows": "node scripts/validate-workflows.mjs",
+    "studio": "node packages/cli/dist/index.js studio --cwd examples/tests"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
