@@ -114,6 +114,60 @@ describe('fingerprintSimilarity', () => {
   });
 });
 
+describe('non-Latin scripts', () => {
+  // Regression: an ASCII-only tokenizer produced zero tokens for these scripts,
+  // and "both empty" scored 1.0 — unrelated labels looked identical.
+  const btn = (name: string, nearbyText: string) => makeFp({ name, text: name, nearbyText });
+
+  it.each([
+    ['Chinese', btn('加入购物车', '购物车商品'), btn('删除账户', '个人资料设置')],
+    ['Japanese', btn('カートに追加', '商品一覧'), btn('アカウント削除', 'プロフィール設定')],
+    ['Russian', btn('Купить', 'Корзина товаров'), btn('Удалить аккаунт', 'Настройки профиля')],
+    ['Hindi', btn('कार्ट में जोड़ें', 'उत्पाद सूची'), btn('खाता हटाएं', 'प्रोफ़ाइल सेटिंग्स')],
+    ['Arabic', btn('أضف إلى السلة', 'قائمة المنتجات'), btn('حذف الحساب', 'إعدادات الملف')],
+  ])('%s: unrelated elements score below the apply floor', (_script, stored, other) => {
+    expect(fingerprintSimilarity(stored, other).score).toBeLessThan(0.6);
+  });
+
+  it.each([
+    [
+      'Chinese',
+      btn('加入购物车', '台灯 ¥49 加入购物车'),
+      btn('加入购物车按钮', '台灯 ¥49 加入购物车'),
+    ],
+    ['Russian', btn('Оформить заказ', 'Ваш заказ'), btn('Оформить ваш заказ', 'Ваш заказ')],
+  ])('%s: a reworded-but-same element still clears Tier 1', (_script, stored, drifted) => {
+    expect(fingerprintSimilarity(stored, drifted).score).toBeGreaterThanOrEqual(0.85);
+  });
+
+  it('tokenizes unspaced scripts as bigrams and keeps combining marks in words', () => {
+    expect(tokenSimilarity('加入购物车', '加入购物车按钮')).toBeGreaterThan(0.8);
+    expect(tokenSimilarity('加入购物车', '删除账户')).toBe(0);
+    expect(tokenSimilarity('कार्ट में जोड़ें', 'कार्ट में जोड़ें')).toBe(1);
+  });
+
+  it('folds full-width and decomposed forms', () => {
+    expect(stringSimilarity('ＯＫ', 'ok')).toBe(1);
+    expect(stringSimilarity('Cafe\u0301', 'Caf\u00e9')).toBe(1);
+  });
+
+  it('symbol-only labels match only when identical', () => {
+    expect(tokenSimilarity('+', '×')).toBe(0);
+    expect(tokenSimilarity('+', '+')).toBe(1);
+    expect(fingerprintSimilarity(btn('🛒', ''), btn('🗑', '')).score).toBeLessThan(0.6);
+    expect(stringSimilarity('🛒', '🗑')).toBe(0);
+  });
+
+  it('assertion guard rejects different non-Latin content', () => {
+    const stored = makeFp({ text: '订单已确认', tag: 'div', role: null });
+    const wrong = makeFp({ text: '支付失败', tag: 'div', role: null });
+    expect(assertionTextSimilarity(stored, wrong)).toBeLessThan(0.5);
+    const ruStored = makeFp({ text: 'Заказ подтверждён', tag: 'div', role: null });
+    const ruWrong = makeFp({ text: 'Оплата не прошла', tag: 'div', role: null });
+    expect(assertionTextSimilarity(ruStored, ruWrong)).toBeLessThan(0.5);
+  });
+});
+
 describe('assertionTextSimilarity (golden rule support)', () => {
   it('flags content mismatch on assertion targets', () => {
     const stored = makeFp({ text: 'Order confirmed', tag: 'div', role: null });

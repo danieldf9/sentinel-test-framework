@@ -75,4 +75,19 @@ describe('classifyFailure heuristics (spec §5)', () => {
     );
     expect(d.classification).toBe('PRODUCT_REGRESSION');
   });
+
+  it('non-Latin: an unrelated element is not mistaken for drift', () => {
+    // Regression: ASCII-only tokenizing scored any two Cyrillic/CJK labels 1.0,
+    // so a removed button was classified as healable drift.
+    const d = classifyFailure(
+      input({
+        storedFingerprint: makeFp({ name: 'Купить', text: 'Купить', nearbyText: 'Корзина' }),
+        candidates: [
+          makeFp({ name: 'Удалить аккаунт', text: 'Удалить аккаунт', nearbyText: 'Профиль' }),
+        ],
+      }),
+      thresholds,
+    );
+    expect(d.classification).toBe('PRODUCT_REGRESSION');
+  });
 });

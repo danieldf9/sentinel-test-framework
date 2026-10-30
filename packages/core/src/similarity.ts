@@ -1,13 +1,32 @@
 import type { ElementFingerprint } from './types.js';
 
 export function normalizeText(s: string | null | undefined): string {
-  return (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  // NFKC folds full-width forms and composed/decomposed accents to one spelling.
+  return (s ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+// Scripts written without spaces between words: a whole phrase would otherwise
+// be a single token, so runs of them are compared as overlapping character
+// bigrams instead. (ー is the katakana prolonged-sound mark, Script=Common.)
+const UNSPACED_RUN =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}ー]+/gu;
+
+/** Unicode-aware word tokens. Every script must produce tokens: an ASCII-only
+ * tokenizer turned all non-Latin text into zero tokens, which tokenSimilarity
+ * then scored as a perfect match (unrelated CJK/Cyrillic labels → 1.0). */
 export function tokenize(s: string | null | undefined): string[] {
-  return normalizeText(s)
-    .split(/[^a-z0-9]+/i)
-    .filter((t) => t.length > 0);
+  const tokens: string[] = [];
+  const spaced = normalizeText(s).replace(UNSPACED_RUN, (run) => {
+    const chars = Array.from(run);
+    if (chars.length === 1) tokens.push(run);
+    for (let i = 0; i + 1 < chars.length; i++) tokens.push(chars[i]! + chars[i + 1]!);
+    return ' ';
+  });
+  // \p{M} keeps combining vowel signs (Devanagari, Arabic, ...) inside words.
+  for (const t of spaced.split(/[^\p{L}\p{N}\p{M}]+/u)) {
+    if (t.length > 0) tokens.push(t);
+  }
+  return tokens;
 }
 
 // Row buffers reused across calls: a heavy Tier 1 heal runs levenshtein
@@ -17,7 +36,7 @@ export function tokenize(s: string | null | undefined): string[] {
 let levPrev = new Uint32Array(64);
 let levCurr = new Uint32Array(64);
 
-export function levenshtein(a: string, b: string): number {
+export function levenshtein(a: string | readonly string[], b: string | readonly string[]): number {
   if (a === b) return 0;
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
@@ -48,8 +67,13 @@ export function stringSimilarity(a: string, b: string): number {
   const nb = normalizeText(b);
   if (na.length === 0 && nb.length === 0) return 1;
   if (na.length === 0 || nb.length === 0) return 0;
-  const max = Math.max(na.length, nb.length);
-  return 1 - levenshtein(na, nb) / max;
+  // Astral characters (emoji, rare CJK) span two UTF-16 units; compare code
+  // points so two different emoji don't share half their "characters".
+  const astral = /[\uD800-\uDFFF]/;
+  const ca = astral.test(na) ? Array.from(na) : na;
+  const cb = astral.test(nb) ? Array.from(nb) : nb;
+  const max = Math.max(ca.length, cb.length);
+  return 1 - levenshtein(ca, cb) / max;
 }
 
 /** Blend of Jaccard and overlap coefficient on token sets. Tolerates added words
@@ -57,7 +81,14 @@ export function stringSimilarity(a: string, b: string): number {
 export function tokenSimilarity(a: string | string[], b: string | string[]): number {
   const ta = new Set(Array.isArray(a) ? a.flatMap((x) => tokenize(x)) : tokenize(a));
   const tb = new Set(Array.isArray(b) ? b.flatMap((x) => tokenize(x)) : tokenize(b));
-  if (ta.size === 0 && tb.size === 0) return 1;
+  if (ta.size === 0 && tb.size === 0) {
+    // No word characters on either side (empty, or glyphs like "+" / "×" / 🛒).
+    // Having nothing to tokenize is not evidence of sameness: only identical
+    // raw text matches.
+    const ra = normalizeText(Array.isArray(a) ? a.join(' ') : a);
+    const rb = normalizeText(Array.isArray(b) ? b.join(' ') : b);
+    return ra === rb ? 1 : 0;
+  }
   if (ta.size === 0 || tb.size === 0) return 0;
   let inter = 0;
   for (const t of ta) if (tb.has(t)) inter++;
