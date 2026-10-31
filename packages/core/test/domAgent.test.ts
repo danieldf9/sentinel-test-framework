@@ -128,3 +128,81 @@ describe('sentinelDomAgent sanitize (spec §10)', () => {
     expect(html).not.toContain('var secret');
   });
 });
+
+describe('sentinelDomAgent inside shadow DOM', () => {
+  function shadowPage() {
+    const doc = new JSDOM(`<!doctype html><html><body>
+      <section id="card"><h2>Aurora Desk Lamp, the warm one</h2><buy-box id="box"></buy-box></section>
+      <fancy-text id="fancy" role="button"></fancy-text>
+    </body></html>`).window.document;
+    const box = doc.getElementById('box')!.attachShadow({ mode: 'open' });
+    box.innerHTML = `<style>.x { color: red }</style>
+      <div><label for="qty">Quantity</label><input id="qty" type="number">
+      <span id="hint">Add one</span><button aria-labelledby="hint">+</button>
+      <nested-box id="inner"></nested-box><p>In stock</p></div>`;
+    const inner = box.getElementById('inner')!.attachShadow({ mode: 'open' });
+    inner.innerHTML = '<button data-testid="deep">Buy now</button>';
+    const fancy = doc.getElementById('fancy')!.attachShadow({ mode: 'open' });
+    fancy.innerHTML = '<style>.y { color: blue }</style><b>Save draft</b>';
+    return { doc, box, inner };
+  }
+  const fingerprint = (el: Element) =>
+    sentinelDomAgent(el, { cmd: 'fingerprint', ...baseOpts }) as ElementFingerprint;
+
+  it('collects elements from nested open shadow roots', () => {
+    const { doc } = shadowPage();
+    const out = sentinelDomAgent(doc.body, { cmd: 'collect', ...baseOpts }) as ElementFingerprint[];
+    expect(out.map((c) => c.testId)).toContain('deep');
+    expect(out.map((c) => c.text)).toContain('In stock');
+  });
+
+  it('never collects from a closed root', () => {
+    const doc = new JSDOM('<body><div id="h"></div></body>').window.document;
+    doc.getElementById('h')!.attachShadow({ mode: 'closed' }).innerHTML =
+      '<button data-testid="hidden">Nope</button>';
+    const out = sentinelDomAgent(doc.body, { cmd: 'collect', ...baseOpts }) as ElementFingerprint[];
+    expect(out.map((c) => c.testId)).not.toContain('hidden');
+  });
+
+  it('respects the element budget across roots', () => {
+    const { doc } = shadowPage();
+    const out = sentinelDomAgent(doc.body, {
+      cmd: 'collect',
+      ...baseOpts,
+      maxElements: 2,
+    }) as unknown[];
+    expect(out).toHaveLength(2);
+  });
+
+  it('resolves labels and aria-labelledby inside the shadow tree', () => {
+    const { box } = shadowPage();
+    expect(fingerprint(box.getElementById('qty')!).labelText).toBe('Quantity');
+    expect(fingerprint(box.querySelector('button')!).name).toBe('Add one');
+  });
+
+  it('nearby text crosses out through the host', () => {
+    const { inner } = shadowPage();
+    expect(fingerprint(inner.querySelector('button')!).nearbyText).toContain('In stock');
+  });
+
+  it('reaches short card text past wrappers that repeat the element text', () => {
+    const doc = new JSDOM(
+      `<body><section><h2>Chair</h2><buy-box id="b"></buy-box></section></body>`,
+    ).window.document;
+    const root = doc.getElementById('b')!.attachShadow({ mode: 'open' });
+    root.innerHTML = '<div><div><div><button>Add to cart</button></div></div></div>';
+    expect(fingerprint(root.querySelector('button')!).nearbyText).toBe('Chair');
+  });
+
+  it('names a host by the text it renders in its shadow tree, without styles', () => {
+    const { doc } = shadowPage();
+    expect(fingerprint(doc.getElementById('fancy')!).name).toBe('Save draft');
+  });
+
+  it('css path runs through each host, which Playwright can resolve', () => {
+    const { inner } = shadowPage();
+    expect(fingerprint(inner.querySelector('button')!).cssPath).toBe(
+      'body > section:nth-of-type(1) > buy-box:nth-of-type(1) > div:nth-of-type(1) > nested-box:nth-of-type(1) > button:nth-of-type(1)',
+    );
+  });
+});

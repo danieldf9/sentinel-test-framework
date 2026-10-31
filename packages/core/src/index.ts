@@ -48,6 +48,8 @@ export {
   serializeCandidates,
   HealLlmResponseSchema,
   SpendCapExceededError,
+  TokenCapExceededError,
+  enforceLlmBudget,
   TIER2_SYSTEM_PROMPT,
   type HealLlmResponse,
   type Tier2Deps,
@@ -64,6 +66,7 @@ export {
   descriptorsFromFingerprint,
   buildLocator,
   describeDescriptor,
+  isPositionalDescriptor,
   descriptorEquals,
   descriptorToCode,
 } from './descriptors.js';

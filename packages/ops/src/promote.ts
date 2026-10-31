@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { describeDescriptor, type SentinelStore } from '@sentinel/core';
+import { describeDescriptor, isPositionalDescriptor, type SentinelStore } from '@sentinel/core';
 
 export interface PromotionPlan {
   /** Repo-relative spec file (from the testId). */
@@ -68,6 +68,7 @@ export function planPromotions(
     const oldCode = h.old_locator as string;
     if (!oldCode || oldCode === newCode) continue;
     const key = `${file} ${oldCode} ${newCode}`;
+    const positional = cache !== null && isPositionalDescriptor(cache.primary);
     const plan = plans.get(key) ?? {
       file,
       absFile: path.resolve(rootDir, file),
@@ -76,8 +77,10 @@ export function planPromotions(
       healIds: [],
       testIds: [],
       occurrences: 0,
-      status: 'ready' as const,
-      note: '',
+      status: positional ? ('conflict' as const) : ('ready' as const),
+      note: positional
+        ? 'only a positional path identifies this element — promoting anything else would be ambiguous on the page (add a test id instead)'
+        : '',
     };
     plan.healIds.push(h.id as number);
     if (!plan.testIds.includes(testId)) plan.testIds.push(testId);

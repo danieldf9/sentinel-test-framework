@@ -434,12 +434,13 @@ program
         if (!setup.provider) {
           console.log(`ℹ LLM provider: ${llm.provider} disabled — ${setup.disabledReason}`);
         } else {
+          if (setup.priceWarning) console.log(`⚠ LLM pricing: ${setup.priceWarning}`);
           try {
             const pong = await setup.provider.complete({
               messages: [{ role: 'user', content: 'Reply with exactly: pong' }],
               // Reasoning/thinking models consume output budget before emitting
               // text — a tiny cap would read as a malformed (empty) reply.
-              maxTokens: 256,
+              maxTokens: llm.maxOutputTokens,
               purpose: 'doctor-ping',
             });
             console.log(

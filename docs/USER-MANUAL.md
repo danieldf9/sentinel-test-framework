@@ -183,8 +183,8 @@ Being honest about limits is what keeps trust in green builds. Sentinel delibera
   test, not to expect Sentinel to paper over the change.
 - **Heal navigation, waits, or complex gestures.** `s.goto` gets environment retries but
   no healing (there is nothing to heal about a URL). Drag-and-drop, hover chains, keyboard
-  shortcuts, file uploads, iframes, new tabs/popups, and multi-step widget interactions
-  are not wrapped — use plain Playwright for those parts and expect no self-healing there.
+  shortcuts, file uploads, iframes, closed shadow roots, new tabs/popups, and multi-step
+  widget interactions are not wrapped — use plain Playwright for those parts and expect no self-healing there.
 - **Invent or repair test data.** Expired accounts, missing seed rows, and unexpected
   login walls are classified as `TEST_DATA` and fail with an actionable message. Fixing
   data/auth is your job.
@@ -279,7 +279,11 @@ Then the confidence policy decides:
   assertions. Malformed JSON gets up to 2 repair prompts, then counts as low confidence.
 - All page content is wrapped in UNTRUSTED-data markers with an injection-defense system
   prompt — a malicious page cannot instruct the model.
-- A per-run spend cap (`maxSpendUsdPerRun`, default $2) fails loudly when exceeded.
+- Two per-run caps fail loudly when exceeded: spend (`maxSpendUsdPerRun`, default $2) and
+  tokens (`maxTokensPerRun`, default 2 000 000). The token cap is what stops a run on a
+  model Sentinel has no price for.
+- If the model names a close second candidate, the heal is refused as ambiguous, the same
+  rule Tiers 0-1 apply.
 - Timeouts + deterministic backoff + a circuit breaker: after 3 consecutive provider
   failures the circuit opens for the rest of the run, the run is flagged
   `healingUnavailable`, and healing continues deterministic-only. A dead endpoint can
@@ -806,22 +810,27 @@ export SENTINEL_LLM_API_KEY=sk-...                        # cloud backends only
 ```ts
 llm: {
   provider: 'anthropic',            // 'anthropic' | 'openai' | 'gemini' | 'openai-compatible'
-  model: 'claude-sonnet-4-5',
+  model: 'claude-sonnet-5-5',
   apiKeyEnv: 'ANTHROPIC_API_KEY',   // name of the env var holding the key
   maxSpendUsdPerRun: 2,             // hard cap — exceeding fails loudly
-  inputCostPerMTok: 3,              // enables cost accounting in the report
-  outputCostPerMTok: 15,
+  maxTokensPerRun: 2_000_000,       // hard cap, also applies when no price is known
   timeoutMs: 30_000,
-  maxOutputTokens: 1024,            // raise for "thinking" models (see troubleshooting)
+  maxOutputTokens: 4096,            // reasoning models spend this budget before answering
 },
 ```
 
 Then verify: `npx sentinel doctor` (it does a live ping and reports vision capability).
 
+**Pricing.** Claude, OpenAI and Gemini models are priced from a built-in table, so cost
+accounting and the spend cap work with no configuration. Set `inputCostPerMTok` and
+`outputCostPerMTok` to override it (negotiated rates, or a gateway model the table does
+not know). Local backends cost $0. For anything else `doctor` and the run print a warning,
+and only `maxTokensPerRun` limits the run.
+
 Defaults worth knowing: `timeoutMs` 30 000, `maxRetries` 2, `backoffBaseMs` 500
 (deterministic, no jitter — heal decisions stay replayable), `circuitBreakerThreshold` 3,
-`maxRepairAttempts` 2, `domCharBudget` 24 000, `maxOutputTokens` 1 024,
-`maxSpendUsdPerRun` $2.
+`maxRepairAttempts` 2, `domCharBudget` 24 000, `maxOutputTokens` 4 096,
+`maxSpendUsdPerRun` $2, `maxTokensPerRun` 2 000 000.
 
 **Tier 3 (vision)** activates automatically when the provider supports images: the
 sanitized failure screenshot + the same candidate list, cross-checked against the Tier 2
@@ -998,12 +1007,18 @@ does a live ping.
 **LLM replies come back empty / always "malformed"** (repair prompts, low confidence)
 Classic with reasoning/"thinking" models (e.g. Gemma, Gemini thinking variants): they
 spend output tokens on internal reasoning before the JSON, and a small budget truncates to
-nothing. Raise `llm.maxOutputTokens` (try 2048).
+nothing. The default is 4096; raise `llm.maxOutputTokens` further for very long reasoning.
 
-**Spend cap exceeded**
-`llm.maxSpendUsdPerRun` (default $2) is a hard stop that fails loudly rather than silently
-burning budget. Raise it deliberately, or set real `inputCostPerMTok`/`outputCostPerMTok`
-(0 = local/unknown backend, which disables cost-based stopping).
+**Spend or token cap exceeded**
+`llm.maxSpendUsdPerRun` (default $2) and `llm.maxTokensPerRun` (default 2 000 000) are hard
+stops that fail loudly rather than silently burning budget. Raise them deliberately. A
+model with no known price records $0, so only the token cap applies to it; set
+`inputCostPerMTok`/`outputCostPerMTok` to turn the spend cap on.
+
+**A step that used to pass now heals or fails on the first wait**
+`actionTimeoutMs` is now one wait. Before, a broken locator waited it out twice, so an
+element appearing between 1× and 2× the timeout passed by accident. If that element is
+legitimately slow, raise `actionTimeoutMs`.
 
 **Tier 3 never runs despite a vision model**
 The adapter may not self-report vision for openai-compatible backends. Set

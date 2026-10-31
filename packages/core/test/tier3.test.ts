@@ -87,6 +87,7 @@ function deps(provider: LLMProvider) {
       maxRepairAttempts: 2,
       domCharBudget: 24_000,
       maxSpendUsdPerRun: 2,
+      maxTokensPerRun: 1_000_000,
       maxOutputTokens: 1024,
     },
   };

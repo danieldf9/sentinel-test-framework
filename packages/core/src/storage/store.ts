@@ -49,6 +49,8 @@ export interface StepRecord {
 }
 
 /** Typed facade over the SQLite database. One instance per worker process. */
+const LOCAL_RUN_IDLE_MS = 15 * 60_000;
+
 export class SentinelStore {
   readonly db: Database.Database;
 
@@ -61,6 +63,38 @@ export class SentinelStore {
   }
 
   // ---- runs ----------------------------------------------------------------
+
+  /**
+   * One run id per `playwright test` invocation when nothing assigned one.
+   * Workers of an invocation share a parent process, so its pid is the key; the
+   * idle window stops a recycled pid (or a long-lived UI-mode runner) from
+   * folding a later invocation into an old run.
+   */
+  resolveLocalRun(runnerPid: number, mintId: () => string, now: number = Date.now()): string {
+    return this.db
+      .transaction(() => {
+        const row = this.db
+          .prepare('SELECT run_id, last_seen FROM local_runs WHERE runner_pid = ?')
+          .get(runnerPid) as { run_id: string; last_seen: number } | undefined;
+        const runId = row && now - row.last_seen < LOCAL_RUN_IDLE_MS ? row.run_id : mintId();
+        this.db
+          .prepare(
+            `INSERT INTO local_runs (runner_pid, run_id, last_seen) VALUES (?, ?, ?)
+             ON CONFLICT (runner_pid) DO UPDATE SET run_id = excluded.run_id, last_seen = excluded.last_seen`,
+          )
+          .run(runnerPid, runId, now);
+        this.db
+          .prepare('DELETE FROM local_runs WHERE last_seen < ?')
+          .run(now - LOCAL_RUN_IDLE_MS * 8);
+        return runId;
+      })
+      .immediate();
+  }
+
+  /** Marks the invocation as still active (see resolveLocalRun). */
+  touchLocalRun(runnerPid: number, now: number = Date.now()): void {
+    this.db.prepare('UPDATE local_runs SET last_seen = ? WHERE runner_pid = ?').run(now, runnerPid);
+  }
 
   ensureRun(id: string, gitSha: string | null, healMode: string): void {
     this.db
@@ -221,6 +255,19 @@ export class SentinelStore {
       n: number;
     };
     return row.n;
+  }
+
+  /** The spec locator a live (applied, unpromoted) heal replaced on this step. */
+  driftedLocator(testId: string, stepId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT old_locator FROM heals
+         WHERE test_id = ? AND step_id = ? AND promoted = 0
+           AND mode IN ('AUTO', 'UNVERIFIED', 'HUMAN')
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(testId, stepId) as { old_locator: string } | undefined;
+    return row?.old_locator ?? null;
   }
 
   /** Distinct steps with reviewed-but-unpromoted heals — the Studio "ready to
@@ -437,6 +484,15 @@ export class SentinelStore {
         c.error,
         Date.now(),
       );
+  }
+
+  llmTokensForRun(runId: string): number {
+    const row = this.db
+      .prepare(
+        'SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens FROM llm_calls WHERE run_id = ?',
+      )
+      .get(runId) as { tokens: number };
+    return row.tokens;
   }
 
   llmSpendForRun(runId: string): number {

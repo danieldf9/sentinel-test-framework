@@ -24,9 +24,11 @@ export function exportDatabase(db: Database.Database): DbExport {
  *   so re-importing the same artifact is idempotent.
  */
 export function importDatabase(db: Database.Database, data: DbExport): { imported: number } {
-  if (data.schemaVersion !== SCHEMA_VERSION) {
+  // Older exports stay importable: a CI cache written before an upgrade must not
+  // fail the first run after it. Only a newer shape is unknowable.
+  if (data.schemaVersion > SCHEMA_VERSION) {
     throw new Error(
-      `Schema version mismatch: export is v${data.schemaVersion}, this build expects v${SCHEMA_VERSION}`,
+      `Schema version mismatch: export is v${data.schemaVersion}, newer than this build (v${SCHEMA_VERSION})`,
     );
   }
   let imported = 0;

@@ -27,17 +27,21 @@ export const LlmConfigSchema = z
     backoffBaseMs: z.number().int().positive().default(500),
     circuitBreakerThreshold: z.number().int().positive().default(3),
     maxSpendUsdPerRun: z.number().positive().default(2),
+    /** Backstop that holds even when no price is known for the model. */
+    maxTokensPerRun: z.number().int().positive().default(2_000_000),
     supportsVision: z.boolean().optional(),
-    /** USD per million tokens for cost accounting (0 = local/unknown backend). */
-    inputCostPerMTok: z.number().min(0).default(0),
-    outputCostPerMTok: z.number().min(0).default(0),
+    /** USD per million tokens. Unset = built-in price table (local backends are
+     * free); set both when your rates differ. 0 is a valid explicit rate. */
+    inputCostPerMTok: z.number().min(0).optional(),
+    outputCostPerMTok: z.number().min(0).optional(),
     /** Malformed-JSON repair attempts before treating as low confidence (spec §2). */
     maxRepairAttempts: z.number().int().min(0).max(5).default(2),
     /** Character budget for the pruned candidate list sent to the LLM. */
     domCharBudget: z.number().int().positive().default(24_000),
-    /** Output budget per call. Reasoning models (e.g. Gemma 4) spend a chunk of
-     * this on <thought> blocks before the JSON answer — keep it generous. */
-    maxOutputTokens: z.number().int().positive().default(1_024),
+    /** Output budget per call. Reasoning models spend a chunk of this thinking
+     * before the JSON answer (and cannot be told not to), so keep it generous:
+     * only tokens actually used are billed. */
+    maxOutputTokens: z.number().int().positive().default(4_096),
   })
   .default({});
 

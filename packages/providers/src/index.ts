@@ -26,3 +26,4 @@ export {
   type ProviderKind,
   type ProviderSetup,
 } from './factory.js';
+export { lookupModelPrice, PRICES_AS_OF, type ModelPrice } from './pricing.js';

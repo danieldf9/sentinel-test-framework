@@ -1,5 +1,10 @@
+import type { Page } from '@playwright/test';
 import { describe, expect, it } from 'vitest';
-import { describeDescriptor, descriptorsFromFingerprint } from '../src/descriptors.js';
+import {
+  describeDescriptor,
+  descriptorsFromFingerprint,
+  firstUniqueDescriptor,
+} from '../src/descriptors.js';
 import { makeStepId, makeTestId } from '../src/ids.js';
 import { makeFp } from './helpers.js';
 
@@ -56,5 +61,35 @@ describe('stable ids', () => {
     expect(a).not.toBe(makeStepId('click', 'Add to cart button', 1));
     expect(a).not.toBe(makeStepId('fill', 'Add to cart button', 0));
     expect(a).toMatch(/^s_[0-9a-f]{12}$/);
+  });
+});
+
+describe('firstUniqueDescriptor', () => {
+  const role = { kind: 'role', value: 'button', name: 'Add to cart', exact: true } as const;
+  const path = { kind: 'css', value: 'body > section:nth-of-type(2) > button' } as const;
+  const pageWith = (counts: { role: number; css: number | Error }) =>
+    ({
+      getByRole: () => ({ count: async () => counts.role }),
+      locator: () => ({
+        count: async () => {
+          if (counts.css instanceof Error) throw counts.css;
+          return counts.css;
+        },
+      }),
+    }) as unknown as Page;
+
+  it('skips a locator that matches several identical widgets', async () => {
+    const page = pageWith({ role: 2, css: 1 });
+    expect(await firstUniqueDescriptor(page, [role, path])).toBe(path);
+  });
+
+  it('keeps the ranking when the best descriptor is unique', async () => {
+    const page = pageWith({ role: 1, css: 1 });
+    expect(await firstUniqueDescriptor(page, [role, path])).toBe(role);
+  });
+
+  it('falls back to the best-ranked when none is unique or one cannot parse', async () => {
+    const page = pageWith({ role: 2, css: new Error('bad selector') });
+    expect(await firstUniqueDescriptor(page, [role, path])).toBe(role);
   });
 });

@@ -378,11 +378,17 @@ async function main() {
   console.log('\nPhase G — CLI escalation answering (spec §6 local channel):');
   const cliPath = path.join(here, '..', '..', 'packages', 'cli', 'dist', 'index.js');
   let answeredStepIds = [];
+  let answeredChoices = [];
   {
     const store = openStore();
     const pending = store.pendingEscalations();
     check(pending.length >= 2, `pending escalations to answer (${pending.length})`);
     answeredStepIds = [...new Set(pending.map((e) => e.stepId))];
+    answeredChoices = pending.map((e) => ({
+      testId: e.testId,
+      stepId: e.stepId,
+      descriptor: e.question.candidates[0].descriptor,
+    }));
     store.close();
     for (const e of pending) {
       const res = spawnSync(
@@ -401,10 +407,15 @@ async function main() {
     check(store.pendingEscalations().length === 0, 'no escalations left pending');
     const humanHeals = rows(store, "SELECT * FROM heals WHERE mode = 'HUMAN'");
     check(humanHeals.length >= 2, `human answers audited as HUMAN heals (${humanHeals.length})`);
-    const updated = rows(
-      store,
-      "SELECT * FROM locator_cache WHERE primary_json LIKE '%Add to bag%'",
-    );
+    // The label matches several buttons, so the primary is the unique descriptor
+    // offered to the human; the fingerprint shows it is the intended element.
+    const updated = answeredChoices.filter(({ testId, stepId, descriptor }) => {
+      const entry = store.getCacheEntry(testId, stepId);
+      return (
+        JSON.stringify(entry?.primary) === JSON.stringify(descriptor) &&
+        entry?.fingerprint.name === 'Add to bag'
+      );
+    });
     check(updated.length >= 2, `answered candidate cached as primary (${updated.length} entries)`);
     store.close();
   }
