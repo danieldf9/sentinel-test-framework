@@ -604,3 +604,110 @@ omissions:
 
 A hosted multi-user Studio would need real authn/z, CSRF tokens, and per-actor audit —
 that remains explicitly out of scope (D42/D43 non-goals).
+
+## D45 — LLM cost: built-in price table plus a token cap
+
+With no cost config a paid model was priced at $0, so `maxSpendUsdPerRun` could never
+trip. `packages/providers/src/pricing.ts` now prices Claude, OpenAI and Gemini by exact
+model id. The order is explicit config, then local ($0), then the table, then unknown with
+a warning. `PRICES_AS_OF` records when the table was last checked, and an announced price
+rise is entered at the higher rate so a cap errs on the safe side.
+
+A table goes stale and gateways invent names, so `maxTokensPerRun` is the backstop: it
+needs no price. Matching is on exact ids (after stripping gateway prefixes and date
+suffixes), never on a family prefix: a guessed price would look authoritative while being
+wrong.
+
+## D46 — Adapters send only the parameters the model accepts
+
+Current Claude models answer 400 to `temperature`, and the Anthropic adapter set it on
+every request, so that provider failed outright on them. The adapter gates on a regex of
+the older models that still accept it, because the newest models are the ones that refuse
+it and a list of refusers would break on every launch. OpenAI-compatible backends vary too
+widely to list, so that adapter reacts to a 400 naming a parameter (switching to
+`max_completion_tokens`, dropping `temperature`) and remembers the result.
+
+`maxOutputTokens` went from 1024 to 4096: reasoning spends from the same budget, and a
+small one truncates the answer to nothing.
+
+## D47 — One timeout per step, and a race for known drift
+
+A broken locator used to wait out `actionTimeoutMs` twice: once in `captureFingerprint`,
+once in the action. `captureFingerprint` now rethrows the timeout, so the setting means
+one wait. Elements that appeared between 1× and 2× the timeout used to pass by accident;
+they now heal or fail on the first wait.
+
+A step with a live heal no longer waits at all. `probeKnownDrift` races the spec locator
+against the healed one with `locator.or(...)`. If the spec locator is back the step runs
+as written; otherwise it goes straight to healing. The heal still goes through the normal
+pipeline, so the golden rule is untouched. Measured with `actionTimeoutMs` 2.5 s, healed
+steps fell from 2726 ms to 152 ms. The race runs in `auto` mode only.
+
+## D48 — Local run ids from the Playwright runner pid
+
+Without `SENTINEL_RUN_ID`, every worker minted its own run, splitting a run's heals and
+its spend cap across workers. Workers share a parent, so `process.ppid` identifies one
+invocation. `local_runs` maps it to a run id, and a 15-minute idle window stops a recycled
+pid from joining an old run; test activity refreshes the window, so a long run is not
+split. CI keeps using `SENTINEL_RUN_ID`.
+
+Config now loads from the directory of Playwright's `configFile`, falling back to cwd, so
+running from the repo root with `-c` finds the right config and database.
+
+## D49 — LLM answers carry a runner-up
+
+Tiers 0-1 refuse ambiguous matches, but the LLM reported a single score, so the ambiguity
+guard could never fire on Tiers 2-3. The response schema gained optional
+`runnerUpIndex`/`runnerUpConfidence`, which feed the existing guard. They are optional so
+a local model that omits them still heals; a missing, -1 or same-element runner-up means
+no ambiguity.
+
+## D50 — Versioned schema migrations
+
+`SCHEMA_VERSION` existed but nothing upgraded a database, and an import refused any
+mismatch, so one schema change would have invalidated every CI cache. `MIGRATIONS` is an
+append-only list run in one `IMMEDIATE` transaction, which takes the write lock before
+reading the version, so parallel workers cannot apply an upgrade twice. A database from a
+newer build is refused rather than written to. Imports accept older exports and reject
+newer ones.
+
+## D51 — Open shadow DOM, and promoted locators that are unique
+
+Playwright locators pierce open shadow roots, but the DOM agent did not: `querySelectorAll`
+stops at a root, so a web component's contents were never candidates, and an element
+inside one recorded a CSS path that did not exist. Collection now walks the document and
+every open root. Fingerprints stay inside their own tree for ids and labels, which is
+where those references resolve, and walk out through the host for nearby text and the CSS
+path. Playwright's CSS treats a host's shadow children as its children, so `>` works
+across the boundary (checked in Chromium, including nested roots).
+
+Limits worth knowing:
+
+- Closed roots stay unreachable, for this code and for Playwright.
+- `sanitize` uses `cloneNode`, which does not copy shadow roots, so saved DOM snapshots
+  omit shadow content. Screenshots still show it.
+- Ids repeat across component instances, so `#id` descriptors are not unique in shadow
+  trees. Disambiguation relies on fingerprint scoring.
+
+Repeated components showed two more problems. Wrappers repeating the element's own text
+used up all three `nearbyText` levels before the card text, so two identical cards scored
+as ties and escalated. Those wrappers no longer spend a level. And the cache primary was
+the top-ranked descriptor whether or not it was unique, so `sentinel promote` could write
+a locator matching both cards into a spec, a strict-mode failure; its guard only caught
+two different steps landing on one target. `firstUniqueDescriptor` now picks the
+best-ranked descriptor matching exactly one element, checked before the action can
+navigate, and promote refuses a positional result and asks for a test id. A positional
+path is fine for healing one run but too brittle to commit. The heal row keeps the
+top-ranked descriptor, since that is what describes the element to a reviewer. Escalation
+candidates use the same check, because an answer also sets the cache primary.
+
+The `nearbyText` change applies to every element, not only shadow ones: text in a same-text
+wrapper now resolves to the outer container. Caches refresh on the next passing run, so a
+step that breaks on the first run after upgrading may score lower and escalate.
+
+The recorder is not shadow-aware yet: listeners on the document see events retargeted to
+the host, and `elementFromPoint` stops there too, so it records the host rather than the
+control inside. Healing is unaffected.
+
+iframes remain out of scope: `page.locator` does not enter frames, so healing them needs a
+frame path in every descriptor, and a policy for cross-origin frames such as card fields.

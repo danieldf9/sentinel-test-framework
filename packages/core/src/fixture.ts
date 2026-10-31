@@ -9,6 +9,7 @@ import {
   describeDescriptor,
   descriptorEquals,
   descriptorsFromFingerprint,
+  firstUniqueDescriptor,
 } from './descriptors.js';
 import { classifyFailure } from './diagnosis.js';
 import { refineDiagnosis } from './diagnosisLlm.js';
@@ -42,6 +43,17 @@ export interface SentinelWorkerContext {
   /** Resilience-wrapped provider, or null when running deterministic-only. */
   llmProvider: ResilientProvider | null;
   llmDisabledReason: string | null;
+}
+
+/** Anchor on the Playwright config so `playwright test -c sub/...` finds the same
+ * sentinel config and database from any directory; cwd covers projects that keep
+ * the two configs apart. */
+async function loadWorkerConfig(playwrightConfig: string | undefined): Promise<LoadedConfig> {
+  if (playwrightConfig) {
+    const loaded = await loadConfig(path.dirname(playwrightConfig));
+    if (loaded.configPath) return loaded;
+  }
+  return loadConfig(process.cwd());
 }
 
 function detectGitSha(cwd: string): string | null {
@@ -256,6 +268,10 @@ export class SentinelActions {
 
     let preFingerprint: ElementFingerprint | null = null;
     try {
+      const knownDrift = await this.probeKnownDrift(stepId, args.locator);
+      if (knownDrift) throw knownDrift;
+      // Throws on timeout: the element never attached, so exec would only wait
+      // out a second timeout before reaching the same diagnosis.
       preFingerprint = await this.captureFingerprint(args.locator);
       await exec(args.locator);
     } catch (err) {
@@ -266,9 +282,35 @@ export class SentinelActions {
     // Success: refresh the cache so this step keeps its Tier-0 fallback ladder current.
     const fingerprint =
       preFingerprint ??
-      (ASSERTION_ACTIONS.has(action) ? await this.captureFingerprint(args.locator) : null);
+      (ASSERTION_ACTIONS.has(action)
+        ? await this.captureFingerprint(args.locator).catch(() => null)
+        : null);
     if (fingerprint) this.updateCache(stepId, args.intent, fingerprint, null);
     this.recordStepRow(stepId, action, args.intent, 'passed', null, null, null, started);
+  }
+
+  /**
+   * A step healed on an earlier run keeps its broken spec locator until promoted,
+   * and would wait out a full timeout on every run. Race it against the healed
+   * locator instead. Returns the failure to diagnose, or null when the normal path
+   * should run (no known drift, or the spec locator works again). Diagnosis, the
+   * guards and the audit trail all still apply; only the wait is skipped.
+   */
+  private async probeKnownDrift(stepId: string, locator: Locator): Promise<Error | null> {
+    if (this.cfg.healing.mode !== 'auto') return null;
+    if (this.ctx.store.driftedLocator(this.testId, stepId) !== String(locator)) return null;
+    const cache = this.ctx.store.getCacheEntry(this.testId, stepId);
+    if (!cache) return null;
+    try {
+      await locator
+        .or(buildLocator(this.page, cache.primary))
+        .first()
+        .waitFor({ state: 'attached', timeout: this.cfg.actionTimeoutMs });
+      if ((await locator.count()) > 0) return null;
+    } catch (err) {
+      if ((err as Error).name !== 'TimeoutError') return null;
+    }
+    return new Error(`[sentinel] known-drifted locator did not reappear: ${String(locator)}`);
   }
 
   private async captureFingerprint(locator: Locator): Promise<ElementFingerprint | null> {
@@ -282,7 +324,8 @@ export class SentinelActions {
       const fp = (await handle.evaluate(sentinelDomAgent, agentOpts)) as ElementFingerprint;
       await handle.dispose();
       return fp;
-    } catch {
+    } catch (err) {
+      if ((err as Error).name === 'TimeoutError') throw err;
       return null;
     }
   }
@@ -381,6 +424,7 @@ export class SentinelActions {
             maxRepairAttempts: this.cfg.llm.maxRepairAttempts,
             maxOutputTokens: this.cfg.llm.maxOutputTokens,
             maxSpendUsdPerRun: this.cfg.llm.maxSpendUsdPerRun,
+            maxTokensPerRun: this.cfg.llm.maxTokensPerRun,
           },
         },
         diagnosisInput,
@@ -401,7 +445,7 @@ export class SentinelActions {
       // PRODUCT_REGRESSION / TEST_DATA / UNKNOWN: never heal. Fail loudly,
       // with an escalation record for regressions (spec §6).
       if (diagnosis.classification === 'PRODUCT_REGRESSION') {
-        this.escalate(p, diagnosis, candidates, cache, failureFrame, false);
+        await this.escalate(p, diagnosis, candidates, cache, failureFrame, false);
       }
       this.failStep(p, diagnosis, null);
     }
@@ -443,6 +487,7 @@ export class SentinelActions {
       maxRepairAttempts: this.cfg.llm.maxRepairAttempts,
       domCharBudget: this.cfg.llm.domCharBudget,
       maxSpendUsdPerRun: this.cfg.llm.maxSpendUsdPerRun,
+      maxTokensPerRun: this.cfg.llm.maxTokensPerRun,
       maxOutputTokens: this.cfg.llm.maxOutputTokens,
     };
     const screenshotForVision = failureFrame.screenshot
@@ -490,7 +535,7 @@ export class SentinelActions {
     }
 
     if (!outcome.healed || !outcome.match) {
-      this.escalate(p, diagnosis, candidates, cache, failureFrame, true, outcome.reason);
+      await this.escalate(p, diagnosis, candidates, cache, failureFrame, true, outcome.reason);
       this.failStep(p, diagnosis, `healing exhausted: ${outcome.reason}`);
       return;
     }
@@ -522,6 +567,9 @@ export class SentinelActions {
         `heal available but not applied (mode=suggest): ${describeDescriptor(match.newDescriptors[0]!)} at confidence ${match.confidence.toFixed(2)} — rerun with --heal=auto or review via sentinel report`,
       );
     }
+
+    // Before the action: it may navigate away from the element.
+    const cachePrimary = await firstUniqueDescriptor(this.page, match.newDescriptors);
 
     // Apply the heal for this run.
     const healedLocator = buildLocator(this.page, match.actionDescriptor);
@@ -562,7 +610,7 @@ export class SentinelActions {
       screenshotAfter: after.screenshot,
       gitSha: this.ctx.gitSha,
     });
-    this.updateCache(stepId, args.intent, match.fingerprint, match.newDescriptors[0] ?? null);
+    this.updateCache(stepId, args.intent, match.fingerprint, cachePrimary);
 
     if (healMode === 'UNVERIFIED') {
       this.unverifiedHeals++;
@@ -627,7 +675,7 @@ export class SentinelActions {
     this.failStep(p, diagnosis, `still failing after ${retries} environment retries`);
   }
 
-  private escalate(
+  private async escalate(
     p: { action: ActionKind; args: StepArgs; stepId: string; error: Error },
     diagnosis: Diagnosis,
     candidates: ElementFingerprint[],
@@ -635,7 +683,7 @@ export class SentinelActions {
     failureFrame: CaptureFrame,
     healingAttempted: boolean,
     healReason?: string,
-  ): void {
+  ): Promise<void> {
     const written = this.recorder.writeFrame(failureFrame, this.artifactDir());
     const labels = ['A', 'B', 'C', 'D'];
     const scored = cache
@@ -659,12 +707,15 @@ export class SentinelActions {
                 ? `healing was not confident enough (${healReason ?? ''})`
                 : 'healing was not attempted'
             }. Which candidate matches the original intent, or is this an intentional redesign?`,
-      candidates: scored.map((s, i) => ({
-        label: labels[i]!,
-        descriptor: descriptorsFromFingerprint(s.fp)[0]!,
-        confidence: Number(s.score.toFixed(2)),
-        fingerprint: s.fp,
-      })),
+      // An answer makes the chosen descriptor the cache primary, which promote reads.
+      candidates: await Promise.all(
+        scored.map(async (s, i) => ({
+          label: labels[i]!,
+          descriptor: await firstUniqueDescriptor(this.page, descriptorsFromFingerprint(s.fp)),
+          confidence: Number(s.score.toFixed(2)),
+          fingerprint: s.fp,
+        })),
+      ),
       context: {
         url: this.pageUrl(),
         classification: diagnosis.classification,
@@ -750,6 +801,7 @@ export class SentinelActions {
 
   /** Called from fixture teardown. */
   _afterTest(): void {
+    if (!process.env.SENTINEL_RUN_ID) this.ctx.store.touchLocalRun(process.ppid);
     const status = this.testInfo.status ?? 'unknown';
     const normalized = status === 'passed' ? 'passed' : status === 'skipped' ? 'skipped' : 'failed';
     if (normalized !== 'skipped') {
@@ -788,11 +840,14 @@ export const test = base.extend<SentinelFixtures, SentinelWorkerFixtures>({
   sentinelWorker: [
     // eslint-disable-next-line no-empty-pattern -- Playwright requires the destructuring pattern
     async ({}, use, workerInfo) => {
-      const loaded = await loadConfig(process.cwd());
+      const loaded = await loadWorkerConfig(workerInfo.config.configFile);
       const store = new SentinelStore(loaded.dbPath);
       const runId =
         process.env.SENTINEL_RUN_ID ??
-        `run-${new Date().toISOString().replace(/[:.]/g, '-')}-local`;
+        store.resolveLocalRun(
+          process.ppid,
+          () => `run-${new Date().toISOString().replace(/[:.]/g, '-')}-local`,
+        );
       const gitSha = detectGitSha(loaded.rootDir);
       store.ensureRun(runId, gitSha, loaded.config.healing.mode);
 
@@ -825,6 +880,7 @@ export const test = base.extend<SentinelFixtures, SentinelWorkerFixtures>({
       if (llmSetup.disabledReason) {
         console.warn(`[sentinel] LLM healing disabled: ${llmSetup.disabledReason}`);
       }
+      if (llmSetup.priceWarning) console.warn(`[sentinel] ${llmSetup.priceWarning}`);
 
       const ctx: SentinelWorkerContext = {
         loaded,
@@ -836,7 +892,6 @@ export const test = base.extend<SentinelFixtures, SentinelWorkerFixtures>({
       };
       await use(ctx);
       store.close();
-      void workerInfo;
     },
     { scope: 'worker' },
   ],

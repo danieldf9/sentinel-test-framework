@@ -70,7 +70,12 @@ function deps(provider: LLMProvider) {
     provider,
     store,
     runId: 'r1',
-    llm: { maxRepairAttempts: 2, maxOutputTokens: 1024, maxSpendUsdPerRun: 2 },
+    llm: {
+      maxRepairAttempts: 2,
+      maxOutputTokens: 1024,
+      maxSpendUsdPerRun: 2,
+      maxTokensPerRun: 1_000_000,
+    },
   };
 }
 

@@ -6,9 +6,11 @@ import {
   parseHealResponse,
   serializeCandidates,
   SpendCapExceededError,
+  TokenCapExceededError,
+  enforceLlmBudget,
   TIER2_SYSTEM_PROMPT,
 } from '../src/tier2.js';
-import type { HealContext } from '../src/healing.js';
+import { runHealingPipeline, type HealContext } from '../src/healing.js';
 import { SentinelStore } from '../src/storage/store.js';
 import { makeFp } from './helpers.js';
 
@@ -74,6 +76,7 @@ function deps(provider: LLMProvider, store = new SentinelStore(':memory:'), over
       maxRepairAttempts: 2,
       domCharBudget: 24_000,
       maxSpendUsdPerRun: 2,
+      maxTokensPerRun: 1_000_000,
       maxOutputTokens: 1024,
       ...overrides,
     },
@@ -267,5 +270,82 @@ describe('makeTier2Resolver', () => {
       SpendCapExceededError,
     );
     expect(provider.requests).toHaveLength(0); // never called the provider
+  });
+});
+
+describe('LLM budget', () => {
+  const usedTokens = (store: SentinelStore, tokens: number) =>
+    store.recordLlmCall({
+      runId: 'r1',
+      provider: 'mock',
+      model: 'mock-1',
+      purpose: 'heal-tier2',
+      inputTokens: tokens,
+      outputTokens: 0,
+      costUsd: 0,
+      latencyMs: 1,
+      ok: true,
+      error: null,
+    });
+
+  it('stops at the token cap even when every call was priced at $0', async () => {
+    const store = new SentinelStore(':memory:');
+    store.ensureRun('r1', null, 'auto');
+    usedTokens(store, 1_000_000);
+    const provider = mockProvider(['{"elementIndex":1,"confidence":0.9,"reasoning":""}']);
+    await expect(makeTier2Resolver(deps(provider, store)).resolve(ctx())).rejects.toBeInstanceOf(
+      TokenCapExceededError,
+    );
+    expect(provider.requests).toHaveLength(0);
+  });
+
+  it('stays quiet under the cap', () => {
+    const store = new SentinelStore(':memory:');
+    store.ensureRun('r1', null, 'auto');
+    usedTokens(store, 10);
+    expect(() =>
+      enforceLlmBudget(store, 'r1', { maxSpendUsdPerRun: 2, maxTokensPerRun: 1_000 }),
+    ).not.toThrow();
+  });
+});
+
+describe('LLM ambiguity (runner-up)', () => {
+  const healWith = async (reply: string) => {
+    const store = new SentinelStore(':memory:');
+    const resolver = makeTier2Resolver(deps(mockProvider([reply]), store));
+    return runHealingPipeline([resolver], ctx());
+  };
+
+  it('a close runner-up is ambiguous: no heal, even at high confidence', async () => {
+    const outcome = await healWith(
+      '{"elementIndex":1,"confidence":0.95,"runnerUpIndex":0,"runnerUpConfidence":0.94,"reasoning":"two look right"}',
+    );
+    expect(outcome.healed).toBe(false);
+  });
+
+  it('a distant runner-up does not block the heal', async () => {
+    const outcome = await healWith(
+      '{"elementIndex":1,"confidence":0.95,"runnerUpIndex":0,"runnerUpConfidence":0.2,"reasoning":"clear"}',
+    );
+    expect(outcome.healed).toBe(true);
+    expect(outcome.match!.confidence).toBeCloseTo(0.95);
+  });
+
+  it.each([
+    ['omitted', '{"elementIndex":1,"confidence":0.95,"reasoning":"ok"}'],
+    [
+      'null',
+      '{"elementIndex":1,"confidence":0.95,"runnerUpIndex":null,"runnerUpConfidence":null,"reasoning":"ok"}',
+    ],
+    [
+      '-1',
+      '{"elementIndex":1,"confidence":0.95,"runnerUpIndex":-1,"runnerUpConfidence":0,"reasoning":"ok"}',
+    ],
+    [
+      'the same element',
+      '{"elementIndex":1,"confidence":0.95,"runnerUpIndex":1,"runnerUpConfidence":0.95,"reasoning":"ok"}',
+    ],
+  ])('runner-up %s means no ambiguity', async (_label, reply) => {
+    expect((await healWith(reply)).healed).toBe(true);
   });
 });

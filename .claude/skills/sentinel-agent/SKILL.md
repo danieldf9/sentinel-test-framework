@@ -153,7 +153,7 @@ around them.
 Run `npx sentinel doctor` first; fix the first ✘. Frequent cases: missing baseline
 ("cannot heal without history" → one green run), LLM disabled warning (API key env var
 missing), circuit breaker opened (endpoint down → run continued deterministic-only),
-empty/malformed LLM replies (thinking models → raise `llm.maxOutputTokens` to 2048),
+empty/malformed LLM replies (thinking models → raise `llm.maxOutputTokens` above the 4096 default),
 heal caps exceeded (big redesign → investigate, don't just raise caps). The full
 symptom→fix catalog is in `docs/USER-MANUAL.md` Part 5.
 

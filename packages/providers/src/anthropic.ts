@@ -42,6 +42,10 @@ function toAnthropicPayload(messages: LLMMessage[], vision: boolean) {
   return { system: system || undefined, messages: rest };
 }
 
+// Sampling parameters are rejected with a 400 from Opus 4.7 on, so only models
+// known to accept them get one; anything newer or unrecognized runs on defaults.
+const ACCEPTS_SAMPLING = /^claude-(?:3\b|(?:opus|sonnet|haiku)-(?:3|4(?:-[0-6])?(?:-\d{8})?$))/;
+
 /** Anthropic Messages API adapter (spec §2 adapter #1). JSON output is enforced
  * by prompting + downstream Zod validation (the API has no json_object mode). */
 export function createAnthropicProvider(opts: AnthropicOptions): LLMProvider {
@@ -66,7 +70,7 @@ export function createAnthropicProvider(opts: AnthropicOptions): LLMProvider {
           body: JSON.stringify({
             model: opts.model,
             max_tokens: request.maxTokens ?? 1024,
-            temperature: request.temperature ?? 0,
+            ...(ACCEPTS_SAMPLING.test(opts.model) ? { temperature: request.temperature ?? 0 } : {}),
             ...(system ? { system } : {}),
             messages,
           }),
@@ -88,12 +92,18 @@ export function createAnthropicProvider(opts: AnthropicOptions): LLMProvider {
         content?: Array<{ type: string; text?: string }>;
         usage?: { input_tokens?: number; output_tokens?: number };
         model?: string;
+        stop_reason?: string;
       };
       const text = (data.content ?? [])
         .filter((b) => b.type === 'text' && typeof b.text === 'string')
         .map((b) => b.text)
         .join('');
-      if (!text) throw new LLMProviderError('malformed response: no text content blocks');
+      if (!text) {
+        // Thinking shares max_tokens with the answer, so a tight cap can leave no text.
+        throw new LLMProviderError(
+          `malformed response: no text content blocks (stop_reason: ${data.stop_reason ?? 'unknown'})`,
+        );
+      }
       return {
         text,
         model: data.model ?? opts.model,

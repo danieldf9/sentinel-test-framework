@@ -123,6 +123,25 @@ describe('planPromotions + applyPromotions (spec §4/§8 promote)', () => {
     store.close();
   });
 
+  it('never writes a positional path into a spec', () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-promote-'));
+    mkdirSync(path.join(dir, 'specs'));
+    const spec = path.join(dir, 'specs', 'shop.spec.ts');
+    writeFileSync(spec, `page.locator('.buy');\n`);
+    const store = new SentinelStore(':memory:');
+    seed(store, 'specs/shop.spec.ts::t1', 's1', `locator('.buy')`, {
+      kind: 'css',
+      value: 'body > section:nth-of-type(2) > button:nth-of-type(1)',
+    });
+
+    const plans = planPromotions(store, dir);
+    expect(plans[0]!.status).toBe('conflict');
+    expect(plans[0]!.note).toMatch(/test id/);
+    expect(applyPromotions(store, plans, { write: true }).applied).toBe(0);
+    expect(readFileSync(spec, 'utf8')).toContain('.buy');
+    store.close();
+  });
+
   it('reports locators that no longer exist in the source', () => {
     dir = mkdtempSync(path.join(os.tmpdir(), 'sentinel-promote-'));
     mkdirSync(path.join(dir, 'specs'));

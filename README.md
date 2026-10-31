@@ -195,8 +195,7 @@ llm: {
   model: 'anthropic/claude-sonnet-4.5',
   apiKeyEnv: 'OPENROUTER_API_KEY',
   maxSpendUsdPerRun: 2,            // hard cap — exceeding fails loudly
-  inputCostPerMTok: 3,             // for cost accounting in llm_calls
-  outputCostPerMTok: 15,
+  maxTokensPerRun: 2_000_000,      // hard cap that also works when a model has no known price
 },
 ```
 

@@ -18,9 +18,6 @@ export default defineConfig({
     // Provider/model/baseUrl come from .env (SENTINEL_LLM_*); the key is read
     // from GEMINI_API_KEY so it is never duplicated across files.
     apiKeyEnv: 'GEMINI_API_KEY',
-    // Gemma 4 is a reasoning model: it spends output tokens on <thought>
-    // blocks before the JSON answer, so give it room.
-    maxOutputTokens: 2048,
   },
   // Consent banners are handled by an explicit, logged pre-step (spec §10) —
   // never auto-accepted silently.

@@ -1,10 +1,16 @@
 import type { LLMMessage, LLMProvider } from '@sentinel/providers';
 import { z } from 'zod';
 import type { DiagnosisInput } from './diagnosis.js';
+import { FatalHealError } from './healing.js';
 import { completeJsonWithRepair, extractJsonObject } from './llmJson.js';
 import { assertionTextSimilarity, fingerprintSimilarity } from './similarity.js';
 import type { SentinelStore } from './storage/store.js';
-import { serializeCandidates } from './tier2.js';
+import {
+  enforceLlmBudget,
+  serializeCandidates,
+  SpendCapExceededError,
+  type LlmBudget,
+} from './tier2.js';
 import type { Diagnosis } from './types.js';
 
 /**
@@ -132,10 +138,9 @@ export interface RefineDeps {
   provider: LLMProvider;
   store: SentinelStore;
   runId: string;
-  llm: {
+  llm: LlmBudget & {
     maxRepairAttempts: number;
     maxOutputTokens: number;
-    maxSpendUsdPerRun: number;
   };
 }
 
@@ -157,10 +162,14 @@ export async function refineDiagnosis(
   // Diagnosis calls respect the run spend cap, but skipping refinement is not
   // fatal — the deterministic classification stands (the heal path enforces
   // the cap loudly).
-  if (deps.store.llmSpendForRun(deps.runId) >= deps.llm.maxSpendUsdPerRun) {
+  try {
+    enforceLlmBudget(deps.store, deps.runId, deps.llm);
+  } catch (err) {
+    if (!(err instanceof FatalHealError)) throw err;
+    const cap = err instanceof SpendCapExceededError ? 'spend' : 'token';
     return {
       ...diagnosis,
-      reason: `${diagnosis.reason} [LLM refinement skipped: spend cap reached]`,
+      reason: `${diagnosis.reason} [LLM refinement skipped: ${cap} cap reached]`,
     };
   }
 

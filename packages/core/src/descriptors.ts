@@ -65,6 +65,30 @@ export function buildLocator(page: Page, d: CandidateDescriptor): Locator {
   }
 }
 
+/**
+ * The best-ranked descriptor matching exactly one element, or the best-ranked one
+ * if none does. This becomes the cache primary, which `sentinel promote` reads: a
+ * locator matching identical widgets would fail strict mode once in the spec. For
+ * such widgets it is usually the positional path, which promote refuses.
+ */
+export async function firstUniqueDescriptor(
+  page: Page,
+  descriptors: CandidateDescriptor[],
+): Promise<CandidateDescriptor> {
+  for (const d of descriptors) {
+    const count = await buildLocator(page, d)
+      .count()
+      .catch(() => 0);
+    if (count === 1) return d;
+  }
+  return descriptors[0]!;
+}
+
+/** The cssPath fallback: fine for one run, too brittle to write into a spec. */
+export function isPositionalDescriptor(d: CandidateDescriptor): boolean {
+  return d.kind === 'css' && d.value.startsWith('body > ');
+}
+
 export function describeDescriptor(d: CandidateDescriptor): string {
   switch (d.kind) {
     case 'testid':

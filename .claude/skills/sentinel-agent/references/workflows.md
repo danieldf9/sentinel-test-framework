@@ -184,11 +184,12 @@ Tiers 0–1 need nothing. For Tiers 2–3:
    `vision: true/false`.
 3. Vision (Tier 3) needs `supportsVision` — for openai-compatible backends that don't
    self-report, set `SENTINEL_LLM_SUPPORTS_VISION=1`.
-4. Cost accounting: set `llm.inputCostPerMTok`/`outputCostPerMTok`; spend appears in the
+4. Cost accounting: built in for Claude, OpenAI and Gemini models (override with
+   `llm.inputCostPerMTok`/`outputCostPerMTok`); spend appears in the
    `spend` query view and the report. `llm.maxSpendUsdPerRun` (default $2) is a hard
    stop.
 5. Known model quirk: reasoning/"thinking" models return empty text when
-   `llm.maxOutputTokens` is too small → raise to 2048.
+   `llm.maxOutputTokens` is too small → raise it above the 4096 default.
 6. Real env vars beat `.env` (fill-only-missing loader). When a setting "doesn't apply",
    check the shell env first.
 

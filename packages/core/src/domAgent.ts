@@ -38,6 +38,43 @@ export function sentinelDomAgent(el: Element, opts: DomAgentOptions): unknown {
     return s.replace(/([^a-zA-Z0-9_-])/g, '\\$1');
   }
 
+  /** The enclosing document or shadow root: ids and label[for] only resolve inside it. */
+  function treeOf(e: Element): Document | ShadowRoot {
+    return e.getRootNode() as Document | ShadowRoot;
+  }
+
+  /** parentElement stops at a shadow root; this continues through its host. */
+  function parentOf(e: Element): Element | null {
+    return e.parentElement ?? (treeOf(e) as ShadowRoot).host ?? null;
+  }
+
+  /** textContent is empty for a host that renders its text in its shadow tree. */
+  function textOf(e: Element): string {
+    const light = norm(e.textContent);
+    if (light || !e.shadowRoot) return light;
+    let text = '';
+    const walker = doc.createTreeWalker(e.shadowRoot, 0x4 /* NodeFilter.SHOW_TEXT */);
+    while (walker.nextNode()) {
+      const tag = walker.currentNode.parentElement?.tagName.toLowerCase();
+      if (tag !== 'style' && tag !== 'script') text += ' ' + walker.currentNode.textContent;
+    }
+    return norm(text);
+  }
+
+  /** The document plus every open shadow root below it. Closed roots are out of
+   * reach here and for Playwright, so no locator could target them anyway. */
+  function allTrees(): Array<Document | ShadowRoot> {
+    const trees: Array<Document | ShadowRoot> = [doc];
+    for (let i = 0; i < trees.length; i++) {
+      const walker = doc.createTreeWalker(trees[i]!, 0x1 /* NodeFilter.SHOW_ELEMENT */);
+      while (walker.nextNode()) {
+        const shadow = (walker.currentNode as Element).shadowRoot;
+        if (shadow) trees.push(shadow);
+      }
+    }
+    return trees;
+  }
+
   function isVisible(e: Element): boolean {
     if (opts.assumeVisible) return true;
     const rect = e.getBoundingClientRect();
@@ -89,7 +126,7 @@ export function sentinelDomAgent(el: Element, opts: DomAgentOptions): unknown {
     if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') return '';
     const id = e.getAttribute('id');
     if (id) {
-      const label = doc.querySelector('label[for="' + cssEscape(id) + '"]');
+      const label = treeOf(e).querySelector('label[for="' + cssEscape(id) + '"]');
       if (label) return norm(label.textContent);
     }
     const wrapping = e.closest('label');
@@ -98,7 +135,7 @@ export function sentinelDomAgent(el: Element, opts: DomAgentOptions): unknown {
   }
 
   function ownText(e: Element): string {
-    const full = norm(e.textContent);
+    const full = textOf(e);
     if (full.length === 0) return '';
     // Containers that aggregate lots of text are not "own" text.
     if (full.length > 160) {
@@ -119,7 +156,7 @@ export function sentinelDomAgent(el: Element, opts: DomAgentOptions): unknown {
       const txt = labelledBy
         .split(/\s+/)
         .map((id) => {
-          const ref = doc.getElementById(id);
+          const ref = treeOf(e).getElementById(id);
           return ref ? norm(ref.textContent) : '';
         })
         .filter(Boolean)
@@ -151,16 +188,25 @@ export function sentinelDomAgent(el: Element, opts: DomAgentOptions): unknown {
     // Prefer the NEAREST container with meaningful text: sibling widgets (e.g.
     // per-product "Add to cart" buttons) are disambiguated by their own card's
     // text, not by a shared page-level ancestor that looks identical for all.
+    // A wrapper repeating the text below it adds nothing, so it doesn't spend a
+    // level: components nest several, and the card text sits just past them.
+    const own = textOf(e);
     let fallback = '';
-    let cur = e.parentElement;
-    for (let i = 0; i < 3 && cur && cur !== doc.body; i++) {
-      const t = norm(cur.textContent);
+    let previous = own;
+    let levels = 0;
+    let cur = parentOf(e);
+    while (levels < 3 && cur && cur !== doc.body) {
+      const t = textOf(cur);
       if (t.length > CONTAINER_TEXT_LIMIT) break;
-      if (!fallback && t.length > 0) fallback = t;
-      if (t.length >= 20 && t.length <= 300) return t.slice(0, MAX_NEARBY);
-      cur = cur.parentElement;
+      if (t !== previous) {
+        levels++;
+        previous = t;
+        if (!fallback && t.length > 0) fallback = t;
+        if (t.length >= 20 && t.length <= 300) return t.slice(0, MAX_NEARBY);
+      }
+      cur = parentOf(cur);
     }
-    return fallback.slice(0, MAX_NEARBY);
+    return (fallback || own).slice(0, MAX_NEARBY);
   }
 
   function cssPath(e: Element): string {
@@ -175,7 +221,8 @@ export function sentinelDomAgent(el: Element, opts: DomAgentOptions): unknown {
         sib = sib.previousElementSibling;
       }
       segments.unshift(tag + ':nth-of-type(' + nth + ')');
-      cur = cur.parentElement;
+      // Playwright's CSS treats a host's shadow children as its children.
+      cur = parentOf(cur);
     }
     return 'body > ' + segments.join(' > ');
   }
@@ -213,32 +260,40 @@ export function sentinelDomAgent(el: Element, opts: DomAgentOptions): unknown {
       '], h1, h2, h3, h4, h5, h6';
     const seen = new Set<Element>();
     const out: Record<string, unknown>[] = [];
-    for (const e of Array.from(doc.querySelectorAll(interactiveSelector))) {
-      if (out.length >= max) break;
-      if (seen.has(e) || !isVisible(e)) continue;
-      if (e.tagName.toLowerCase() === 'input' && (e.getAttribute('type') || '') === 'hidden')
-        continue;
-      seen.add(e);
-      out.push(fingerprintOf(e));
+    const trees = allTrees();
+    for (const tree of trees) {
+      for (const e of Array.from(tree.querySelectorAll(interactiveSelector))) {
+        if (out.length >= max) break;
+        if (seen.has(e) || !isVisible(e)) continue;
+        if (e.tagName.toLowerCase() === 'input' && (e.getAttribute('type') || '') === 'hidden')
+          continue;
+        seen.add(e);
+        out.push(fingerprintOf(e));
+      }
     }
     // Text-bearing leaves: assertion targets (messages, prices, statuses).
     // TreeWalker instead of querySelectorAll('*'): on large SPAs the latter
     // materializes the entire DOM as one array; the walker visits nodes lazily
     // and stops as soon as the element budget is reached.
-    const walker = doc.createTreeWalker(doc.body, 0x1 /* NodeFilter.SHOW_ELEMENT */);
-    while (out.length < max) {
-      const node = walker.nextNode();
-      if (!node) break;
-      const e = node as Element;
-      if (seen.has(e)) continue;
-      if (e.childElementCount > 0) continue;
-      const tag = e.tagName.toLowerCase();
-      if (tag === 'script' || tag === 'style' || tag === 'noscript') continue;
-      const text = norm(e.textContent);
-      if (text.length === 0 || text.length > 200) continue;
-      if (!isVisible(e)) continue;
-      seen.add(e);
-      out.push(fingerprintOf(e));
+    for (const tree of trees) {
+      const walker = doc.createTreeWalker(
+        tree === doc ? doc.body : tree,
+        0x1 /* NodeFilter.SHOW_ELEMENT */,
+      );
+      while (out.length < max) {
+        const node = walker.nextNode();
+        if (!node) break;
+        const e = node as Element;
+        if (seen.has(e)) continue;
+        if (e.childElementCount > 0) continue;
+        const tag = e.tagName.toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'noscript') continue;
+        const text = norm(e.textContent);
+        if (text.length === 0 || text.length > 200) continue;
+        if (!isVisible(e)) continue;
+        seen.add(e);
+        out.push(fingerprintOf(e));
+      }
     }
     return out;
   }

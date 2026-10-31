@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const TABLES = [
   'runs',
@@ -140,6 +140,42 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 CREATE INDEX IF NOT EXISTS idx_llm_calls_run ON llm_calls(run_id);
 `;
 
+/** Ordered upgrades: MIGRATIONS[n] takes the schema from v(n+1) to v(n+2).
+ * Append only; never edit one that has shipped. DDL above stays the v1 baseline. */
+const MIGRATIONS: Array<(db: Database.Database) => void> = [
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS local_runs (
+        runner_pid INTEGER PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        last_seen INTEGER NOT NULL
+      );
+    `);
+  },
+];
+
+function migrate(db: Database.Database): void {
+  // IMMEDIATE takes the write lock before reading the version, so parallel
+  // workers opening an old database cannot both apply the same upgrade.
+  db.transaction(() => {
+    const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as {
+      value: string;
+    };
+    const current = Number(row.value);
+    if (current > SCHEMA_VERSION) {
+      throw new Error(
+        `Sentinel database is schema v${current}, newer than this build (v${SCHEMA_VERSION}) — upgrade Sentinel`,
+      );
+    }
+    for (let version = current; version < SCHEMA_VERSION; version++) {
+      MIGRATIONS[version - 1]!(db);
+    }
+    db.prepare(`UPDATE meta SET value = ? WHERE key = 'schema_version'`).run(
+      String(SCHEMA_VERSION),
+    );
+  }).immediate();
+}
+
 export function openDatabase(dbPath: string): Database.Database {
   if (dbPath !== ':memory:') {
     mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -150,9 +186,12 @@ export function openDatabase(dbPath: string): Database.Database {
   db.pragma('busy_timeout = 5000');
   db.pragma('synchronous = NORMAL');
   db.exec(DDL);
-  db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run(
-    'schema_version',
-    String(SCHEMA_VERSION),
-  );
+  db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run('schema_version', '1');
+  try {
+    migrate(db);
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   return db;
 }
