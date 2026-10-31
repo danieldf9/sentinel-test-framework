@@ -98,6 +98,7 @@ jobs:
         run: pnpm exec sentinel run -- --shard=${{ matrix.shard }}/${{ inputs.shard-total }}
 
       - name: Export shard state
+        id: export
         if: always()
         working-directory: ${{ inputs.working-directory }}
         run: |
@@ -111,7 +112,10 @@ jobs:
           path: |
             ${{ inputs.working-directory }}/.sentinel-shards/
             ${{ inputs.working-directory }}/.sentinel/artifacts/
-          if-no-files-found: ignore
+          # Both paths are dot-dirs, which upload-artifact skips by default.
+          include-hidden-files: true
+          # No files after a good export is a bug; after a dead shard it's expected.
+          if-no-files-found: ${{ steps.export.outcome == 'success' && 'error' || 'warn' }}
           retention-days: 14
 
   report:
@@ -154,6 +158,12 @@ jobs:
             echo "importing $f"
             pnpm exec sentinel db import "$f"
           done
+          # Heal rows hold the shard's absolute screenshot paths; jobs share the
+          # workspace path, so restoring here is what `sentinel report` reads.
+          if [ -d .sentinel-merged/.sentinel/artifacts ]; then
+            mkdir -p .sentinel/artifacts
+            cp -R .sentinel-merged/.sentinel/artifacts/. .sentinel/artifacts/
+          fi
 
       - name: Report + summary
         working-directory: ${{ inputs.working-directory }}

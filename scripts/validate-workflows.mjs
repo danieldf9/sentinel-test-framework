@@ -21,6 +21,15 @@ function load(rel) {
   return { text, doc: parse(text) };
 }
 
+/** upload-artifact skips dot-paths unless told otherwise, so these upload nothing. */
+function uploadsDroppingHiddenPaths(doc) {
+  return Object.values(doc.jobs ?? {})
+    .flatMap((job) => job.steps ?? [])
+    .filter((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'))
+    .filter((step) => /(^|\/)\.[^./]/m.test(String(step.with?.path ?? '')))
+    .filter((step) => step.with['include-hidden-files'] !== true);
+}
+
 console.log('sentinel.yml (reusable workflow):');
 {
   const { text, doc } = load('.github/workflows/sentinel.yml');
@@ -48,6 +57,30 @@ console.log('sentinel.yml (reusable workflow):');
     'uploads the HTML report artifact',
   );
   check(text.includes('.sentinel/artifacts'), 'uploads heal screenshots');
+  check(
+    uploadsDroppingHiddenPaths(doc).length === 0,
+    'artifact uploads of dot-paths set include-hidden-files',
+  );
+  const shardUpload = doc.jobs?.test?.steps?.find((step) =>
+    String(step.with?.name ?? '').startsWith('sentinel-shard-'),
+  );
+  check(
+    doc.jobs?.test?.steps?.some((step) => step.id === 'export') &&
+      shardUpload?.with?.['if-no-files-found'] ===
+        "${{ steps.export.outcome == 'success' && 'error' || 'warn' }}",
+    'shard upload that finds nothing fails after a good export, warns after a dead shard',
+  );
+  const mergeStep = doc.jobs?.report?.steps?.find((step) =>
+    String(step.run ?? '').includes('.sentinel-merged'),
+  );
+  check(
+    String(mergeStep?.run).includes("find .sentinel-merged -name 'shard-*.json'"),
+    'merge job finds shard exports inside the downloaded artifact tree',
+  );
+  check(
+    String(mergeStep?.run).includes('.sentinel-merged/.sentinel/artifacts'),
+    'merge job restores heal screenshots to the paths the heal rows recorded',
+  );
   check(
     text.includes('--run-prefix "gh-${{ github.run_id }}-"'),
     'summary aggregates shard runs by prefix',
@@ -118,6 +151,10 @@ console.log('sentinel init template (all package managers):');
       parses = false;
     }
     check(parses, `${pm} template is valid YAML`);
+    check(
+      parses && uploadsDroppingHiddenPaths(parse(tpl)).length === 0,
+      `${pm} template artifact uploads of dot-paths set include-hidden-files`,
+    );
     check(tpl.includes(installMarker[pm]), `${pm} template installs with ${pm}`);
     check(
       pm !== 'pnpm' || tpl.includes('pnpm/action-setup@'),
